@@ -1,0 +1,808 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>3er tiempo — Armar equipos</title>
+  <style>
+    :root {
+      --grass-dark: #1a3d2e;
+      --grass-mid: #245a42;
+      --grass-light: #2d6b4f;
+      --line-white: rgba(255, 255, 255, 0.12);
+      --accent: #e8622c;
+      --accent-hover: #ff7844;
+      --text: #f0ebe3;
+      --text-muted: #a8b5a8;
+      --team-claro: #f5e6c8;
+      --team-claro-stroke: #d4b896;
+      --team-oscuro: #1a2744;
+      --team-oscuro-stroke: #3d5a80;
+      --card-bg: rgba(0, 0, 0, 0.35);
+      --input-bg: rgba(0, 0, 0, 0.4);
+      --warning: #f5c542;
+      --success: #6ecf8a;
+      --error: #ff6b6b;
+    }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      background-color: var(--grass-dark);
+      background-image:
+        repeating-linear-gradient(
+          90deg,
+          transparent,
+          transparent 49px,
+          var(--line-white) 49px,
+          var(--line-white) 50px
+        ),
+        repeating-linear-gradient(
+          0deg,
+          transparent,
+          transparent 49px,
+          var(--line-white) 49px,
+          var(--line-white) 50px
+        ),
+        radial-gradient(ellipse at 50% 0%, var(--grass-light) 0%, var(--grass-dark) 70%);
+      color: var(--text);
+      min-height: 100vh;
+      line-height: 1.5;
+    }
+
+    .container {
+      max-width: 960px;
+      margin: 0 auto;
+      padding: 1rem 1rem 3rem;
+    }
+
+    header {
+      text-align: center;
+      padding: 1.5rem 0 1rem;
+    }
+
+    h1 {
+      font-family: 'Arial Narrow', 'Franklin Gothic Medium Condensed', 'Impact', sans-serif;
+      font-stretch: condensed;
+      font-size: clamp(2.2rem, 8vw, 3.5rem);
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--text);
+      text-shadow: 2px 2px 0 var(--accent);
+    }
+
+    .subtitle {
+      color: var(--text-muted);
+      font-size: 0.9rem;
+      margin-top: 0.25rem;
+    }
+
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--line-white);
+      border-radius: 12px;
+      padding: 1rem 1.25rem;
+      margin-bottom: 1.25rem;
+      backdrop-filter: blur(4px);
+    }
+
+    .card h2 {
+      font-family: 'Arial Narrow', 'Franklin Gothic Medium Condensed', sans-serif;
+      font-stretch: condensed;
+      font-size: 1.1rem;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--accent);
+      margin-bottom: 0.75rem;
+    }
+
+    /* Formato */
+    .format-buttons {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+    }
+
+    .format-btn {
+      flex: 1 1 calc(25% - 0.5rem);
+      min-width: 70px;
+      padding: 0.6rem 0.5rem;
+      border: 2px solid var(--line-white);
+      border-radius: 8px;
+      background: var(--input-bg);
+      color: var(--text);
+      font-family: inherit;
+      font-size: 0.95rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: border-color 0.15s, background 0.15s;
+    }
+
+    .format-btn:hover { border-color: var(--accent); }
+    .format-btn.active {
+      border-color: var(--accent);
+      background: rgba(232, 98, 44, 0.25);
+      color: var(--accent);
+    }
+
+    .warning-box {
+      display: none;
+      margin-top: 0.75rem;
+      padding: 0.6rem 0.85rem;
+      border-radius: 8px;
+      background: rgba(245, 197, 66, 0.15);
+      border: 1px solid var(--warning);
+      color: var(--warning);
+      font-size: 0.88rem;
+    }
+
+    .warning-box.visible { display: block; }
+
+    /* Tabla de jugadores */
+    .table-wrap {
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.85rem;
+    }
+
+    thead th {
+      position: sticky;
+      top: 0;
+      background: var(--grass-mid);
+      padding: 0.5rem 0.35rem;
+      text-align: center;
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--text-muted);
+      white-space: nowrap;
+      z-index: 1;
+    }
+
+    thead th:first-child { text-align: left; padding-left: 0.5rem; }
+
+    tbody tr { border-bottom: 1px solid var(--line-white); }
+    tbody tr:hover { background: rgba(255,255,255,0.04); }
+
+    tbody td {
+      padding: 0.35rem 0.25rem;
+      text-align: center;
+      vertical-align: middle;
+    }
+
+    tbody td:first-child {
+      text-align: left;
+      padding-left: 0.5rem;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+
+    .attr-input {
+      width: 42px;
+      padding: 0.3rem 0.15rem;
+      border: 1px solid var(--line-white);
+      border-radius: 6px;
+      background: var(--input-bg);
+      color: var(--text);
+      font-size: 0.85rem;
+      text-align: center;
+      -moz-appearance: textfield;
+    }
+
+    .attr-input:focus {
+      outline: none;
+      border-color: var(--accent);
+    }
+
+    .attr-input::-webkit-outer-spin-button,
+    .attr-input::-webkit-inner-spin-button {
+      -webkit-appearance: none;
+      margin: 0;
+    }
+
+    .row-actions {
+      display: flex;
+      align-items: center;
+      gap: 0.35rem;
+      justify-content: flex-end;
+      padding-right: 0.35rem;
+      min-width: 90px;
+    }
+
+    .save-btn {
+      padding: 0.25rem 0.45rem;
+      border: 1px solid var(--line-white);
+      border-radius: 6px;
+      background: transparent;
+      color: var(--text-muted);
+      font-size: 0.7rem;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+
+    .save-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+    .save-status {
+      font-size: 0.68rem;
+      white-space: nowrap;
+      min-width: 52px;
+      text-align: left;
+    }
+
+    .save-status.saving { color: var(--text-muted); }
+    .save-status.saved { color: var(--success); }
+    .save-status.error { color: var(--error); }
+
+    .load-status {
+      font-size: 0.82rem;
+      color: var(--text-muted);
+      margin-bottom: 0.5rem;
+    }
+
+    .load-status.error { color: var(--error); }
+
+    /* Botones principales */
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+      margin-bottom: 1.25rem;
+    }
+
+    .btn-primary {
+      flex: 1 1 auto;
+      padding: 0.85rem 1.5rem;
+      border: none;
+      border-radius: 10px;
+      background: var(--accent);
+      color: #fff;
+      font-family: 'Arial Narrow', 'Franklin Gothic Medium Condensed', sans-serif;
+      font-stretch: condensed;
+      font-size: 1.15rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+
+    .btn-primary:hover { background: var(--accent-hover); }
+    .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    .btn-secondary {
+      flex: 1 1 auto;
+      padding: 0.85rem 1.5rem;
+      border: 2px solid var(--accent);
+      border-radius: 10px;
+      background: transparent;
+      color: var(--accent);
+      font-family: inherit;
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+
+    .btn-secondary:hover { background: rgba(232, 98, 44, 0.15); }
+    .btn-secondary:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    /* Resultados */
+    #results { display: none; }
+    #results.visible { display: block; }
+
+    .teams-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0.75rem;
+      margin-bottom: 1rem;
+    }
+
+    @media (max-width: 500px) {
+      .teams-grid { grid-template-columns: 1fr; }
+    }
+
+    .team-box {
+      border-radius: 10px;
+      padding: 0.85rem 1rem;
+    }
+
+    .team-box.claro {
+      background: rgba(245, 230, 200, 0.12);
+      border: 2px solid var(--team-claro-stroke);
+    }
+
+    .team-box.oscuro {
+      background: rgba(26, 39, 68, 0.5);
+      border: 2px solid var(--team-oscuro-stroke);
+    }
+
+    .team-box h3 {
+      font-family: 'Arial Narrow', 'Franklin Gothic Medium Condensed', sans-serif;
+      font-stretch: condensed;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      font-size: 1rem;
+      margin-bottom: 0.5rem;
+    }
+
+    .team-box.claro h3 { color: var(--team-claro); }
+    .team-box.oscuro h3 { color: #7a9ec8; }
+
+    .team-box ul {
+      list-style: none;
+      font-size: 0.88rem;
+    }
+
+    .team-box li {
+      padding: 0.15rem 0;
+      border-bottom: 1px solid rgba(255,255,255,0.06);
+    }
+
+    .sobrantes {
+      margin-top: 0.5rem;
+      font-size: 0.85rem;
+      color: var(--text-muted);
+    }
+
+    .sobrantes strong { color: var(--warning); }
+
+    /* Radar */
+    .radar-wrap {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.75rem;
+    }
+
+    .radar-legend {
+      display: flex;
+      gap: 1.5rem;
+      font-size: 0.85rem;
+    }
+
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+    }
+
+    .legend-swatch {
+      width: 16px;
+      height: 16px;
+      border-radius: 3px;
+      opacity: 0.7;
+    }
+
+    .legend-swatch.claro { background: var(--team-claro); }
+    .legend-swatch.oscuro { background: #4a6fa5; }
+
+    #radar-svg {
+      width: 100%;
+      max-width: 340px;
+      height: auto;
+    }
+
+    .cost-info {
+      text-align: center;
+      font-size: 0.78rem;
+      color: var(--text-muted);
+      margin-top: 0.5rem;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>3er Tiempo</h1>
+      <p class="subtitle">Equipos parejos entre amigos</p>
+    </header>
+
+    <section class="card">
+      <h2>Formato de partido</h2>
+      <div class="format-buttons" id="format-buttons">
+        <button class="format-btn" data-size="5">Fútbol 5</button>
+        <button class="format-btn" data-size="7">Fútbol 7</button>
+        <button class="format-btn active" data-size="9">Fútbol 9</button>
+        <button class="format-btn" data-size="11">Fútbol 11</button>
+      </div>
+      <div class="warning-box" id="format-warning"></div>
+    </section>
+
+    <section class="card">
+      <h2>Roster de jugadores</h2>
+      <p class="load-status" id="load-status">Cargando jugadores…</p>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Nombre</th>
+              <th>Marca</th>
+              <th>Físico</th>
+              <th>Habilidad</th>
+              <th>Remate</th>
+              <th>Disparo</th>
+              <th>Arco</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="players-tbody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <div class="actions">
+      <button class="btn-primary" id="btn-armar">Armar equipos</button>
+      <button class="btn-secondary" id="btn-barajar" disabled>Volver a barajar</button>
+    </div>
+
+    <section class="card" id="results">
+      <h2>Equipos</h2>
+      <div class="teams-grid">
+        <div class="team-box claro">
+          <h3>Equipo Claro</h3>
+          <ul id="team-claro-list"></ul>
+        </div>
+        <div class="team-box oscuro">
+          <h3>Equipo Oscuro</h3>
+          <ul id="team-oscuro-list"></ul>
+        </div>
+      </div>
+      <p class="sobrantes" id="sobrantes-info"></p>
+
+      <h2 style="margin-top:1.25rem">Rendimiento</h2>
+      <div class="radar-wrap">
+        <div class="radar-legend">
+          <span class="legend-item"><span class="legend-swatch claro"></span> Equipo Claro</span>
+          <span class="legend-item"><span class="legend-swatch oscuro"></span> Equipo Oscuro</span>
+        </div>
+        <svg id="radar-svg" viewBox="0 0 300 300" xmlns="http://www.w3.org/2000/svg"></svg>
+        <p class="cost-info" id="cost-info"></p>
+      </div>
+    </section>
+  </div>
+
+  <script>
+    // ─── Config ───────────────────────────────────────────────────────────
+    const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/TU_ID_AQUI/exec';
+
+    const ATTRS = ['marca', 'fisico', 'habilidad', 'remate', 'disparo', 'arco'];
+    const ATTR_LABELS = ['Marca', 'Físico', 'Habilidad', 'Remate', 'Disparo', 'Arco'];
+
+    const ATTR_WEIGHTS = {
+      marca: 1, fisico: 1, habilidad: 1, remate: 1, disparo: 1, arco: 0.6
+    };
+
+    const DEFAULT_NAMES = [
+      'Marcelo', 'Maxi', 'Turco', 'Gato', 'Mariano', 'Charly', 'Gonza', 'Ariel',
+      'Claudio', 'Cacho', 'Jorge', 'Jose', 'Claudio M', 'Seba', 'Marcos',
+      'Juampi', 'Chifi', 'Matías'
+    ];
+
+    const ITERATIONS = 600;
+    const TOP_N = 5;
+
+    // ─── State ────────────────────────────────────────────────────────────
+    let players = [];
+    let teamSize = 9;
+    let lastTopCombos = [];
+
+    // ─── Init ─────────────────────────────────────────────────────────────
+    document.addEventListener('DOMContentLoaded', () => {
+      initFormatButtons();
+      loadPlayers();
+      document.getElementById('btn-armar').addEventListener('click', () => armarEquipos(false));
+      document.getElementById('btn-barajar').addEventListener('click', () => armarEquipos(true));
+    });
+
+    function initFormatButtons() {
+      document.querySelectorAll('.format-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          document.querySelectorAll('.format-btn').forEach(b => b.classList.remove('active'));
+          btn.classList.add('active');
+          teamSize = Number(btn.dataset.size);
+          updateFormatWarning();
+        });
+      });
+      updateFormatWarning();
+    }
+
+    function updateFormatWarning() {
+      const needed = teamSize * 2;
+      const count = players.length;
+      const diff = count - needed;
+      const box = document.getElementById('format-warning');
+
+      if (diff === 0) {
+        box.classList.remove('visible');
+        return;
+      }
+
+      box.classList.add('visible');
+      if (diff > 0) {
+        box.textContent = `⚠ Hay ${count} jugadores pero el formato ${teamSize} necesita ${needed}. Sobran ${diff} (quedarán fuera del partido).`;
+      } else {
+        box.textContent = `⚠ Hay ${count} jugadores pero el formato ${teamSize} necesita ${needed}. Faltan ${Math.abs(diff)}.`;
+      }
+    }
+
+    // ─── Google Sheets sync ───────────────────────────────────────────────
+    async function loadPlayers() {
+      const status = document.getElementById('load-status');
+      status.textContent = 'Cargando jugadores…';
+      status.classList.remove('error');
+
+      try {
+        if (APPS_SCRIPT_URL.includes('TU_ID_AQUI')) {
+          throw new Error('offline');
+        }
+        const res = await fetch(APPS_SCRIPT_URL);
+        const data = await res.json();
+        if (!data.ok || !Array.isArray(data.players)) throw new Error('Respuesta inválida');
+        players = data.players;
+        status.textContent = `${players.length} jugadores cargados desde la planilla.`;
+      } catch {
+        players = DEFAULT_NAMES.map(nombre => ({
+          nombre,
+          marca: 3, fisico: 3, habilidad: 3, remate: 3, disparo: 3, arco: 3
+        }));
+        status.textContent = APPS_SCRIPT_URL.includes('TU_ID_AQUI')
+          ? 'Modo local: configurá APPS_SCRIPT_URL para sincronizar con Google Sheets.'
+          : 'No se pudo conectar. Mostrando datos locales.';
+        status.classList.add('error');
+      }
+
+      renderTable();
+      updateFormatWarning();
+    }
+
+    function renderTable() {
+      const tbody = document.getElementById('players-tbody');
+      tbody.innerHTML = '';
+
+      players.forEach((p, idx) => {
+        const tr = document.createElement('tr');
+        tr.dataset.idx = idx;
+
+        const tdName = document.createElement('td');
+        tdName.textContent = p.nombre;
+        tr.appendChild(tdName);
+
+        ATTRS.forEach(attr => {
+          const td = document.createElement('td');
+          const input = document.createElement('input');
+          input.type = 'number';
+          input.min = 1;
+          input.max = 5;
+          input.step = 1;
+          input.className = 'attr-input';
+          input.dataset.attr = attr;
+          input.value = p[attr];
+          input.addEventListener('blur', () => {
+            clampAndSync(input, idx);
+            savePlayer(idx);
+          });
+          input.addEventListener('change', () => clampAndSync(input, idx));
+          td.appendChild(input);
+          tr.appendChild(td);
+        });
+
+        const tdActions = document.createElement('td');
+        tdActions.className = 'row-actions';
+        const saveBtn = document.createElement('button');
+        saveBtn.className = 'save-btn';
+        saveBtn.textContent = 'Guardar';
+        saveBtn.addEventListener('click', () => savePlayer(idx));
+        const statusSpan = document.createElement('span');
+        statusSpan.className = 'save-status';
+        statusSpan.id = `status-${idx}`;
+        tdActions.appendChild(saveBtn);
+        tdActions.appendChild(statusSpan);
+        tr.appendChild(tdActions);
+
+        tbody.appendChild(tr);
+      });
+    }
+
+    function clampAndSync(input, idx) {
+      let val = Math.round(Number(input.value));
+      if (isNaN(val) || val < 1) val = 1;
+      if (val > 5) val = 5;
+      input.value = val;
+      players[idx][input.dataset.attr] = val;
+    }
+
+    function getRowData(idx) {
+      const tr = document.querySelector(`tr[data-idx="${idx}"]`);
+      const data = { nombre: players[idx].nombre };
+      tr.querySelectorAll('.attr-input').forEach(input => {
+        data[input.dataset.attr] = Number(input.value);
+      });
+      return data;
+    }
+
+    async function savePlayer(idx) {
+      const statusEl = document.getElementById(`status-${idx}`);
+      const data = getRowData(idx);
+      Object.assign(players[idx], data);
+
+      if (APPS_SCRIPT_URL.includes('TU_ID_AQUI')) {
+        statusEl.textContent = 'local';
+        statusEl.className = 'save-status saved';
+        return;
+      }
+
+      statusEl.textContent = 'guardando…';
+      statusEl.className = 'save-status saving';
+
+      try {
+        const res = await fetch(APPS_SCRIPT_URL, {
+          method: 'POST',
+          redirect: 'follow',
+          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+          body: JSON.stringify(data)
+        });
+        const result = await res.json();
+        if (!result.ok) throw new Error(result.error || 'Error al guardar');
+        statusEl.textContent = 'guardado';
+        statusEl.className = 'save-status saved';
+        setTimeout(() => { statusEl.textContent = ''; statusEl.className = 'save-status'; }, 2500);
+      } catch {
+        try {
+          await fetch(APPS_SCRIPT_URL, {
+            method: 'POST',
+            mode: 'no-cors',
+            headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+            body: JSON.stringify(data)
+          });
+          statusEl.textContent = 'guardado';
+          statusEl.className = 'save-status saved';
+          setTimeout(() => { statusEl.textContent = ''; statusEl.className = 'save-status'; }, 2500);
+        } catch {
+          statusEl.textContent = 'error';
+          statusEl.className = 'save-status error';
+        }
+      }
+    }
+
+    // ─── Team balancing ───────────────────────────────────────────────────
+    function shuffle(arr) {
+      const a = arr.slice();
+      for (let i = a.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [a[i], a[j]] = [a[j], a[i]];
+      }
+      return a;
+    }
+
+    function teamAverage(team, attr) {
+      if (!team.length) return 0;
+      return team.reduce((s, p) => s + p[attr], 0) / team.length;
+    }
+
+    function comboCost(teamA, teamB) {
+      let cost = 0;
+      for (const attr of ATTRS) {
+        const diff = Math.abs(teamAverage(teamA, attr) - teamAverage(teamB, attr));
+        cost += diff * ATTR_WEIGHTS[attr];
+      }
+      return cost;
+    }
+
+    function effectiveTeamSize() {
+      return Math.min(teamSize, Math.floor(players.length / 2));
+    }
+
+    function findBestCombos() {
+      const n = effectiveTeamSize();
+      if (n < 1) return [];
+      const results = [];
+
+      for (let i = 0; i < ITERATIONS; i++) {
+        const shuffled = shuffle(players);
+        const teamA = shuffled.slice(0, n);
+        const teamB = shuffled.slice(n, n * 2);
+        const sobrantes = shuffled.slice(n * 2);
+        const cost = comboCost(teamA, teamB);
+        results.push({ teamA, teamB, sobrantes, cost });
+      }
+
+      results.sort((a, b) => a.cost - b.cost);
+      return results.slice(0, TOP_N);
+    }
+
+    function armarEquipos(rebarajar) {
+      if (effectiveTeamSize() < 1) return;
+
+      let combo;
+      if (rebarajar && lastTopCombos.length) {
+        combo = lastTopCombos[Math.floor(Math.random() * lastTopCombos.length)];
+      } else {
+        lastTopCombos = findBestCombos();
+        combo = lastTopCombos[Math.floor(Math.random() * lastTopCombos.length)];
+      }
+
+      renderResults(combo);
+      document.getElementById('results').classList.add('visible');
+      document.getElementById('btn-barajar').disabled = false;
+    }
+
+    function renderResults({ teamA, teamB, sobrantes, cost }) {
+      fillTeamList('team-claro-list', teamA);
+      fillTeamList('team-oscuro-list', teamB);
+
+      const sobEl = document.getElementById('sobrantes-info');
+      if (sobrantes.length) {
+        sobEl.innerHTML = `<strong>Fuera del partido:</strong> ${sobrantes.map(p => p.nombre).join(', ')}`;
+      } else {
+        sobEl.textContent = '';
+      }
+
+      drawRadar(teamA, teamB);
+
+      const diffs = ATTRS.map(a => {
+        const d = Math.abs(teamAverage(teamA, a) - teamAverage(teamB, a)).toFixed(2);
+        return `${ATTR_LABELS[ATTRS.indexOf(a)]}: ${d}`;
+      });
+      document.getElementById('cost-info').textContent =
+        `Costo total: ${cost.toFixed(3)} · Diferencias por atributo: ${diffs.join(' · ')}`;
+    }
+
+    function fillTeamList(id, team) {
+      const ul = document.getElementById(id);
+      ul.innerHTML = team.map(p => `<li>${p.nombre}</li>`).join('');
+    }
+
+    // ─── Radar chart (SVG) ────────────────────────────────────────────────
+    function drawRadar(teamA, teamB) {
+      const svg = document.getElementById('radar-svg');
+      const cx = 150, cy = 150, maxR = 110;
+      const minVal = 1, maxVal = 5;
+      const numAxes = ATTRS.length;
+
+      function pointFor(value, axisIndex) {
+        const angle = (Math.PI * 2 * axisIndex / numAxes) - Math.PI / 2;
+        const r = ((value - minVal) / (maxVal - minVal)) * maxR;
+        return { x: cx + r * Math.cos(angle), y: cy + r * Math.sin(angle) };
+      }
+
+      function polygonPoints(team) {
+        return ATTRS.map((attr, i) => {
+          const pt = pointFor(teamAverage(team, attr), i);
+          return `${pt.x},${pt.y}`;
+        }).join(' ');
+      }
+
+      let html = '';
+
+      // Grid rings
+      for (let level = 1; level <= 5; level++) {
+        const pts = ATTRS.map((_, i) => {
+          const p = pointFor(level, i);
+          return `${p.x},${p.y}`;
+        }).join(' ');
+        html += `<polygon points="${pts}" fill="none" stroke="rgba(255,255,255,0.1)" stroke-width="1"/>`;
+      }
+
+      // Axes
+      ATTRS.forEach((_, i) => {
+        const outer = pointFor(maxVal, i);
+        html += `<line x1="${cx}" y1="${cy}" x2="${outer.x}" y2="${outer.y}" stroke="rgba(255,255,255,0.15)" stroke-width="1"/>`;
+        const labelPt = pointFor(maxVal + 0.55, i);
+        html += `<text x="${labelPt.x}" y="${labelPt.y}" text-anchor="middle" dominant-baseline="middle" fill="#a8b5a8" font-size="10" font-family="sans-serif">${ATTR_LABELS[i]}</text>`;
+      });
+
+      // Team polygons
+      html += `<polygon points="${polygonPoints(teamB)}" fill="rgba(74,111,165,0.45)" stroke="#3d5a80" stroke-width="2"/>`;
+      html += `<polygon points="${polygonPoints(teamA)}" fill="rgba(245,230,200,0.4)" stroke="#d4b896" stroke-width="2"/>`;
+
+      svg.innerHTML = html;
+    }
+  </script>
+</body>
+</html>
