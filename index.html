@@ -109,7 +109,7 @@
 
     .warning-box.visible { display: block; }
 
-    .load-status { font-size: 0.82rem; color: var(--text-muted); margin-bottom: 0.75rem; }
+    .load-status { font-size: 0.82rem; color: var(--text-muted); margin-bottom: 0; }
     .load-status.error { color: var(--error); }
 
     /* Grid de cartas FIFA */
@@ -189,6 +189,65 @@
       opacity: 0.7;
       text-align: center;
     }
+
+    .fifa-card-add {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 0.35rem;
+      background: rgba(0, 0, 0, 0.25);
+      border: 2px dashed var(--line-white);
+      color: var(--text-muted);
+      cursor: pointer;
+      min-height: 180px;
+    }
+
+    .fifa-card-add:hover {
+      border-color: var(--accent);
+      color: var(--accent);
+      transform: translateY(-3px);
+    }
+
+    .fifa-card-add-icon {
+      font-size: 2rem;
+      line-height: 1;
+      font-weight: 300;
+    }
+
+    .fifa-card-add-label {
+      font-size: 0.72rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      text-align: center;
+    }
+
+    .roster-toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.75rem;
+      margin-bottom: 0.75rem;
+      flex-wrap: wrap;
+    }
+
+    .btn-add-player {
+      padding: 0.5rem 0.85rem;
+      border: 2px solid var(--accent);
+      border-radius: 8px;
+      background: transparent;
+      color: var(--accent);
+      font-size: 0.82rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      cursor: pointer;
+    }
+
+    .btn-add-player:hover { background: rgba(232, 98, 44, 0.15); }
+
+    .field-full { grid-column: 1 / -1; }
 
     /* Modal editor */
     .modal-overlay {
@@ -398,7 +457,10 @@
 
     <section class="card">
       <h2>Plantilla</h2>
-      <p class="load-status" id="load-status">Cargando jugadores…</p>
+      <div class="roster-toolbar">
+        <p class="load-status" id="load-status">Cargando jugadores…</p>
+        <button type="button" class="btn-add-player" id="btn-add-player">+ Agregar jugador</button>
+      </div>
       <div class="players-grid" id="players-grid"></div>
     </section>
 
@@ -470,7 +532,8 @@
     const DEFAULT_NAMES = [
       'Marcelo', 'Maxi', 'Turco', 'Gato', 'Mariano', 'Charly', 'Gonza', 'Ariel',
       'Claudio', 'Cacho', 'Jorge', 'Jose', 'Claudio M', 'Seba', 'Marcos',
-      'Juampi', 'Chifi', 'Matías'
+      'Juampi', 'Chifi', 'Matías',
+      'Pablo', 'Fer', 'Tasla', 'Franco', 'Javi'
     ];
 
     const POSICIONES = ['ARQ', 'DEF', 'MED', 'DEL', 'LIB'];
@@ -483,6 +546,7 @@
     let teamSize = 9;
     let lastTopCombos = [];
     let editingIdx = -1;
+    let isCreating = false;
 
     function avg(...vals) {
       const v = vals.filter(n => !isNaN(n));
@@ -553,6 +617,7 @@
         if (e.target.id === 'modal-overlay') closeModal();
       });
       document.getElementById('btn-save').addEventListener('click', () => savePlayer(editingIdx));
+      document.getElementById('btn-add-player').addEventListener('click', openCreateEditor);
     });
 
     function initFormatButtons() {
@@ -624,18 +689,25 @@
         card.addEventListener('click', () => openEditor(idx));
         grid.appendChild(card);
       });
+
+      const addCard = document.createElement('div');
+      addCard.className = 'fifa-card fifa-card-add';
+      addCard.innerHTML = '<span class="fifa-card-add-icon">+</span><span class="fifa-card-add-label">Nuevo jugador</span>';
+      addCard.addEventListener('click', openCreateEditor);
+      grid.appendChild(addCard);
     }
 
-    function openEditor(idx) {
-      editingIdx = idx;
-      const p = players[idx];
-      document.getElementById('modal-title').textContent = p.nombre;
-      document.getElementById('modal-preview').innerHTML = buildFifaCardHtml(p, false);
-      document.getElementById('modal-save-status').textContent = '';
-      document.getElementById('modal-save-status').className = 'save-status';
+    function buildFormHtml(p, editableName) {
+      const nameField = editableName
+        ? `<div class="form-section">
+            <h4>Nombre</h4>
+            <div class="field field-full">
+              <input type="text" name="nombre" required maxlength="40" placeholder="Nombre del jugador" value="${p.nombre === 'Nuevo jugador' ? '' : p.nombre}">
+            </div>
+          </div>`
+        : '';
 
-      const form = document.getElementById('player-form');
-      form.innerHTML = `
+      return `${nameField}
         <div class="form-section">
           <h4>Datos personales</h4>
           <div class="form-grid cols-3">
@@ -684,15 +756,46 @@
             ${statField('salidas', 'Salidas', p)}
           </div>
         </div>`;
+    }
 
+    function bindFormEvents() {
+      const form = document.getElementById('player-form');
       form.querySelectorAll('input[type=number][data-stat]').forEach(input => {
         input.addEventListener('input', updateModalPreview);
         input.addEventListener('change', updateModalPreview);
       });
       form.querySelectorAll('select, input:not([data-stat])').forEach(el => {
+        el.addEventListener('input', updateModalPreview);
         el.addEventListener('change', updateModalPreview);
       });
+    }
 
+    function openCreateEditor() {
+      isCreating = true;
+      editingIdx = -1;
+      const p = defaultPlayer('Nuevo jugador');
+      document.getElementById('modal-title').textContent = 'Nuevo jugador';
+      document.getElementById('btn-save').textContent = 'Crear jugador';
+      document.getElementById('modal-preview').innerHTML = buildFifaCardHtml(p, false);
+      document.getElementById('modal-save-status').textContent = '';
+      document.getElementById('modal-save-status').className = 'save-status';
+      document.getElementById('player-form').innerHTML = buildFormHtml(p, true);
+      bindFormEvents();
+      document.getElementById('modal-overlay').classList.add('open');
+      document.querySelector('[name=nombre]')?.focus();
+    }
+
+    function openEditor(idx) {
+      isCreating = false;
+      editingIdx = idx;
+      const p = players[idx];
+      document.getElementById('modal-title').textContent = p.nombre;
+      document.getElementById('btn-save').textContent = 'Guardar cambios';
+      document.getElementById('modal-preview').innerHTML = buildFifaCardHtml(p, false);
+      document.getElementById('modal-save-status').textContent = '';
+      document.getElementById('modal-save-status').className = 'save-status';
+      document.getElementById('player-form').innerHTML = buildFormHtml(p, false);
+      bindFormEvents();
       document.getElementById('modal-overlay').classList.add('open');
     }
 
@@ -703,39 +806,92 @@
 
     function readFormData() {
       const form = document.getElementById('player-form');
-      const p = { nombre: players[editingIdx].nombre };
-      p.edad = Number(form.querySelector('[name=edad]').value) || 30;
-      p.altura = Number(form.querySelector('[name=altura]').value) || 175;
-      p.pie_habil = form.querySelector('[name=pie_habil]').value;
-      p.posicion = form.querySelector('[name=posicion]').value;
+      const base = isCreating
+        ? defaultPlayer('')
+        : { ...players[editingIdx] };
+
+      const nameInput = form.querySelector('[name=nombre]');
+      base.nombre = nameInput
+        ? String(nameInput.value || '').trim()
+        : players[editingIdx].nombre;
+
+      base.edad = Number(form.querySelector('[name=edad]').value) || 30;
+      base.altura = Number(form.querySelector('[name=altura]').value) || 175;
+      base.pie_habil = form.querySelector('[name=pie_habil]').value;
+      base.posicion = form.querySelector('[name=posicion]').value;
       STAT_FIELDS.forEach(f => {
         let v = roundStat(Number(form.querySelector(`[name=${f}]`).value));
-        p[f] = v;
+        base[f] = v;
         form.querySelector(`[name=${f}]`).value = v;
       });
-      return p;
+      return base;
     }
 
     function updateModalPreview() {
-      if (editingIdx < 0) return;
-      const merged = { ...players[editingIdx], ...readFormData() };
+      if (editingIdx < 0 && !isCreating) return;
+      const merged = isCreating
+        ? readFormData()
+        : { ...players[editingIdx], ...readFormData() };
+      if (!merged.nombre) merged.nombre = 'Nuevo jugador';
       document.getElementById('modal-preview').innerHTML = buildFifaCardHtml(merged, false);
     }
 
     function closeModal() {
       document.getElementById('modal-overlay').classList.remove('open');
       editingIdx = -1;
+      isCreating = false;
+      document.getElementById('btn-save').textContent = 'Guardar cambios';
+    }
+
+    function playerExists(nombre, excludeIdx) {
+      const n = nombre.trim().toLowerCase();
+      return players.some((p, i) => i !== excludeIdx && p.nombre.trim().toLowerCase() === n);
+    }
+
+    async function postPlayer(data, create) {
+      const payload = create ? { ...data, action: 'create' } : data;
+      const res = await fetch(APPS_SCRIPT_URL, {
+        method: 'POST',
+        redirect: 'follow',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify(payload)
+      });
+      const result = await res.json();
+      if (!result.ok) throw new Error(result.error || 'Error al guardar');
     }
 
     async function savePlayer(idx) {
-      if (idx < 0) return;
-      const data = readFormData();
-      Object.assign(players[idx], data);
-
       const statusEl = document.getElementById('modal-save-status');
-      renderGrid();
+      const data = readFormData();
+
+      if (isCreating) {
+        if (!data.nombre) {
+          statusEl.textContent = 'falta nombre';
+          statusEl.className = 'save-status error';
+          return;
+        }
+        if (playerExists(data.nombre, -1)) {
+          statusEl.textContent = 'ya existe';
+          statusEl.className = 'save-status error';
+          return;
+        }
+      } else if (idx < 0) {
+        return;
+      }
+
+      if (!isCreating) {
+        Object.assign(players[idx], data);
+      }
 
       if (APPS_SCRIPT_URL.includes('TU_ID_AQUI')) {
+        if (isCreating) {
+          players.push(data);
+          editingIdx = players.length - 1;
+          isCreating = false;
+          document.getElementById('btn-save').textContent = 'Guardar cambios';
+        }
+        renderGrid();
+        updateFormatWarning();
         statusEl.textContent = 'local';
         statusEl.className = 'save-status saved';
         updateModalPreview();
@@ -746,14 +902,14 @@
       statusEl.className = 'save-status saving';
 
       try {
-        const res = await fetch(APPS_SCRIPT_URL, {
-          method: 'POST',
-          redirect: 'follow',
-          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-          body: JSON.stringify(data)
-        });
-        const result = await res.json();
-        if (!result.ok) throw new Error(result.error);
+        await postPlayer(data, isCreating);
+        if (isCreating) {
+          players.push(data);
+          editingIdx = players.length - 1;
+          isCreating = false;
+          document.getElementById('modal-title').textContent = data.nombre;
+          document.getElementById('btn-save').textContent = 'Guardar cambios';
+        }
         statusEl.textContent = 'guardado';
         statusEl.className = 'save-status saved';
       } catch {
@@ -762,8 +918,15 @@
             method: 'POST',
             mode: 'no-cors',
             headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-            body: JSON.stringify(data)
+            body: JSON.stringify(isCreating ? { ...data, action: 'create' } : data)
           });
+          if (isCreating) {
+            players.push(data);
+            editingIdx = players.length - 1;
+            isCreating = false;
+            document.getElementById('modal-title').textContent = data.nombre;
+            document.getElementById('btn-save').textContent = 'Guardar cambios';
+          }
           statusEl.textContent = 'guardado';
           statusEl.className = 'save-status saved';
         } catch {
@@ -771,6 +934,9 @@
           statusEl.className = 'save-status error';
         }
       }
+
+      renderGrid();
+      updateFormatWarning();
       updateModalPreview();
     }
 

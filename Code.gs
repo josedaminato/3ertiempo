@@ -83,51 +83,86 @@ function doGet(e) {
     .setMimeType(ContentService.MimeType.JSON);
 }
 
+function buildRowValues_(body) {
+  var rowValues = [
+    String(body.nombre || '').trim(),
+    String(body.posicion || 'MED').trim(),
+    Number(body.edad) || 30,
+    Number(body.altura) || 175,
+    String(body.pie_habil || 'Derecho').trim()
+  ];
+
+  for (var j = 0; j < STAT_FIELDS.length; j++) {
+    rowValues.push(Number(body[STAT_FIELDS[j]]));
+  }
+
+  return rowValues;
+}
+
+function findPlayerRow_(data, nombre) {
+  for (var r = 1; r < data.length; r++) {
+    if (String(data[r][COL.nombre] || '').trim() === nombre) {
+      return r + 1;
+    }
+  }
+  return -1;
+}
+
+function nameExists_(data, nombre, ignoreRowIndex) {
+  var target = nombre.trim().toLowerCase();
+  for (var r = 1; r < data.length; r++) {
+    if (ignoreRowIndex && r + 1 === ignoreRowIndex) continue;
+    if (String(data[r][COL.nombre] || '').trim().toLowerCase() === target) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function validateStats_(body) {
+  for (var i = 0; i < STAT_FIELDS.length; i++) {
+    var key = STAT_FIELDS[i];
+    var val = Number(body[key]);
+    if (isNaN(val) || val < 1 || val > 5) {
+      return 'Atributo inválido: ' + key;
+    }
+  }
+  return null;
+}
+
 function doPost(e) {
   try {
     var body = JSON.parse(e.postData.contents);
     var nombre = String(body.nombre || '').trim();
+    var action = String(body.action || 'update').trim();
 
     if (!nombre) {
       return jsonResponse_({ ok: false, error: 'Falta el nombre del jugador' });
     }
 
-    for (var i = 0; i < STAT_FIELDS.length; i++) {
-      var key = STAT_FIELDS[i];
-      var val = Number(body[key]);
-      if (isNaN(val) || val < 1 || val > 5) {
-        return jsonResponse_({ ok: false, error: 'Atributo inválido: ' + key });
-      }
+    var statError = validateStats_(body);
+    if (statError) {
+      return jsonResponse_({ ok: false, error: statError });
     }
 
     var sheet = getSheet_();
     var data = sheet.getDataRange().getValues();
-    var rowIndex = -1;
 
-    for (var r = 1; r < data.length; r++) {
-      if (String(data[r][COL.nombre] || '').trim() === nombre) {
-        rowIndex = r + 1;
-        break;
+    if (action === 'create') {
+      if (nameExists_(data, nombre, null)) {
+        return jsonResponse_({ ok: false, error: 'Ya existe un jugador con ese nombre' });
       }
+      sheet.appendRow(buildRowValues_(body));
+      return jsonResponse_({ ok: true, nombre: nombre, created: true });
     }
+
+    var rowIndex = findPlayerRow_(data, nombre);
 
     if (rowIndex === -1) {
       return jsonResponse_({ ok: false, error: 'Jugador no encontrado: ' + nombre });
     }
 
-    var rowValues = [
-      nombre,
-      String(body.posicion || 'MED').trim(),
-      Number(body.edad) || 30,
-      Number(body.altura) || 175,
-      String(body.pie_habil || 'Derecho').trim()
-    ];
-
-    for (var j = 0; j < STAT_FIELDS.length; j++) {
-      rowValues.push(Number(body[STAT_FIELDS[j]]));
-    }
-
-    sheet.getRange(rowIndex, 1, 1, rowValues.length).setValues([rowValues]);
+    sheet.getRange(rowIndex, 1, 1, buildRowValues_(body).length).setValues([buildRowValues_(body)]);
 
     return jsonResponse_({ ok: true, nombre: nombre });
   } catch (err) {
