@@ -23,6 +23,9 @@
       --warning: #f5c542;
       --success: #6ecf8a;
       --error: #ff6b6b;
+      --fifa-gold: linear-gradient(145deg, #c9a227 0%, #f5e6a8 35%, #b8860b 70%, #8b6914 100%);
+      --fifa-silver: linear-gradient(145deg, #8a9199 0%, #d8dde3 40%, #6b7280 100%);
+      --fifa-bronze: linear-gradient(145deg, #8b5a2b 0%, #c9956c 40%, #6b3f1f 100%);
     }
 
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -31,36 +34,17 @@
       font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
       background-color: var(--grass-dark);
       background-image:
-        repeating-linear-gradient(
-          90deg,
-          transparent,
-          transparent 49px,
-          var(--line-white) 49px,
-          var(--line-white) 50px
-        ),
-        repeating-linear-gradient(
-          0deg,
-          transparent,
-          transparent 49px,
-          var(--line-white) 49px,
-          var(--line-white) 50px
-        ),
+        repeating-linear-gradient(90deg, transparent, transparent 49px, var(--line-white) 49px, var(--line-white) 50px),
+        repeating-linear-gradient(0deg, transparent, transparent 49px, var(--line-white) 49px, var(--line-white) 50px),
         radial-gradient(ellipse at 50% 0%, var(--grass-light) 0%, var(--grass-dark) 70%);
       color: var(--text);
       min-height: 100vh;
       line-height: 1.5;
     }
 
-    .container {
-      max-width: 960px;
-      margin: 0 auto;
-      padding: 1rem 1rem 3rem;
-    }
+    .container { max-width: 960px; margin: 0 auto; padding: 1rem 1rem 3rem; }
 
-    header {
-      text-align: center;
-      padding: 1.5rem 0 1rem;
-    }
+    header { text-align: center; padding: 1.5rem 0 1rem; }
 
     h1 {
       font-family: 'Arial Narrow', 'Franklin Gothic Medium Condensed', 'Impact', sans-serif;
@@ -68,15 +52,10 @@
       font-size: clamp(2.2rem, 8vw, 3.5rem);
       letter-spacing: 0.08em;
       text-transform: uppercase;
-      color: var(--text);
       text-shadow: 2px 2px 0 var(--accent);
     }
 
-    .subtitle {
-      color: var(--text-muted);
-      font-size: 0.9rem;
-      margin-top: 0.25rem;
-    }
+    .subtitle { color: var(--text-muted); font-size: 0.9rem; margin-top: 0.25rem; }
 
     .card {
       background: var(--card-bg);
@@ -97,12 +76,7 @@
       margin-bottom: 0.75rem;
     }
 
-    /* Formato */
-    .format-buttons {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 0.5rem;
-    }
+    .format-buttons { display: flex; flex-wrap: wrap; gap: 0.5rem; }
 
     .format-btn {
       flex: 1 1 calc(25% - 0.5rem);
@@ -112,14 +86,10 @@
       border-radius: 8px;
       background: var(--input-bg);
       color: var(--text);
-      font-family: inherit;
-      font-size: 0.95rem;
       font-weight: 600;
       cursor: pointer;
-      transition: border-color 0.15s, background 0.15s;
     }
 
-    .format-btn:hover { border-color: var(--accent); }
     .format-btn.active {
       border-color: var(--accent);
       background: rgba(232, 98, 44, 0.25);
@@ -139,194 +109,251 @@
 
     .warning-box.visible { display: block; }
 
-    /* Tabla de jugadores */
-    .table-wrap {
-      overflow-x: auto;
-      -webkit-overflow-scrolling: touch;
+    .load-status { font-size: 0.82rem; color: var(--text-muted); margin-bottom: 0.75rem; }
+    .load-status.error { color: var(--error); }
+
+    /* Grid de cartas FIFA */
+    .players-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+      gap: 0.75rem;
     }
 
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      font-size: 0.85rem;
+    .fifa-card {
+      position: relative;
+      aspect-ratio: 2 / 2.85;
+      border-radius: 10px;
+      padding: 0.55rem 0.5rem 0.45rem;
+      cursor: pointer;
+      border: 2px solid rgba(0,0,0,0.3);
+      box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+      transition: transform 0.15s, box-shadow 0.15s;
+      color: #1a1208;
+      overflow: hidden;
     }
 
-    thead th {
-      position: sticky;
-      top: 0;
-      background: var(--grass-mid);
-      padding: 0.5rem 0.35rem;
+    .fifa-card:hover { transform: translateY(-3px); box-shadow: 0 8px 20px rgba(0,0,0,0.5); }
+    .fifa-card.tier-gold { background: var(--fifa-gold); }
+    .fifa-card.tier-silver { background: var(--fifa-silver); }
+    .fifa-card.tier-bronze { background: var(--fifa-bronze); }
+
+    .fifa-card-top {
+      display: flex;
+      align-items: flex-start;
+      gap: 0.15rem;
+      margin-bottom: 0.2rem;
+    }
+
+    .fifa-ovr {
+      font-family: 'Arial Narrow', 'Impact', sans-serif;
+      font-size: 1.85rem;
+      font-weight: 900;
+      line-height: 1;
+      letter-spacing: -0.02em;
+    }
+
+    .fifa-pos {
+      font-size: 0.65rem;
+      font-weight: 800;
+      text-transform: uppercase;
+      margin-top: 0.15rem;
+      opacity: 0.85;
+    }
+
+    .fifa-name {
+      font-family: 'Arial Narrow', 'Franklin Gothic Medium Condensed', sans-serif;
+      font-stretch: condensed;
+      font-size: 0.78rem;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.02em;
+      line-height: 1.1;
+      margin-bottom: 0.35rem;
+      min-height: 1.8em;
+    }
+
+    .fifa-stats {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0.1rem 0.35rem;
+      font-size: 0.62rem;
+      font-weight: 700;
+    }
+
+    .fifa-stat { display: flex; justify-content: space-between; gap: 0.2rem; }
+    .fifa-stat abbr { opacity: 0.75; font-weight: 600; text-decoration: none; }
+
+    .fifa-meta {
+      margin-top: 0.3rem;
+      font-size: 0.55rem;
+      opacity: 0.7;
       text-align: center;
+    }
+
+    /* Modal editor */
+    .modal-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.75);
+      z-index: 100;
+      overflow-y: auto;
+      padding: 1rem;
+    }
+
+    .modal-overlay.open { display: flex; align-items: flex-start; justify-content: center; }
+
+    .modal {
+      background: var(--grass-mid);
+      border: 1px solid var(--line-white);
+      border-radius: 14px;
+      width: 100%;
+      max-width: 520px;
+      margin: auto;
+      padding: 1rem 1.15rem 1.25rem;
+    }
+
+    .modal-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 1rem;
+    }
+
+    .modal-header h3 {
+      font-family: 'Arial Narrow', sans-serif;
+      font-stretch: condensed;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--accent);
+      font-size: 1.1rem;
+    }
+
+    .modal-close {
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      font-size: 1.5rem;
+      cursor: pointer;
+      line-height: 1;
+    }
+
+    .modal-preview { display: flex; justify-content: center; margin-bottom: 1rem; }
+    .modal-preview .fifa-card { width: 130px; cursor: default; }
+    .modal-preview .fifa-card:hover { transform: none; }
+
+    .form-section { margin-bottom: 1rem; }
+
+    .form-section h4 {
       font-size: 0.75rem;
       text-transform: uppercase;
-      letter-spacing: 0.04em;
+      letter-spacing: 0.06em;
+      color: var(--accent);
+      margin-bottom: 0.5rem;
+      padding-bottom: 0.25rem;
+      border-bottom: 1px solid var(--line-white);
+    }
+
+    .form-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0.5rem;
+    }
+
+    .form-grid.cols-3 { grid-template-columns: repeat(3, 1fr); }
+
+    .field label {
+      display: block;
+      font-size: 0.68rem;
       color: var(--text-muted);
-      white-space: nowrap;
-      z-index: 1;
+      margin-bottom: 0.2rem;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
     }
 
-    thead th:first-child { text-align: left; padding-left: 0.5rem; }
-
-    tbody tr { border-bottom: 1px solid var(--line-white); }
-    tbody tr:hover { background: rgba(255,255,255,0.04); }
-
-    tbody td {
-      padding: 0.35rem 0.25rem;
-      text-align: center;
-      vertical-align: middle;
-    }
-
-    tbody td:first-child {
-      text-align: left;
-      padding-left: 0.5rem;
-      font-weight: 600;
-      white-space: nowrap;
-    }
-
-    .attr-input {
-      width: 42px;
-      padding: 0.3rem 0.15rem;
+    .field input, .field select {
+      width: 100%;
+      padding: 0.45rem 0.5rem;
       border: 1px solid var(--line-white);
       border-radius: 6px;
       background: var(--input-bg);
       color: var(--text);
-      font-size: 0.85rem;
-      text-align: center;
-      -moz-appearance: textfield;
+      font-size: 0.9rem;
     }
 
-    .attr-input:focus {
+    .field input:focus, .field select:focus {
       outline: none;
       border-color: var(--accent);
     }
 
-    .attr-input::-webkit-outer-spin-button,
-    .attr-input::-webkit-inner-spin-button {
-      -webkit-appearance: none;
-      margin: 0;
-    }
+    .field input[type=number] { text-align: center; -moz-appearance: textfield; }
+    .field input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; }
 
-    .row-actions {
+    .modal-footer {
       display: flex;
       align-items: center;
-      gap: 0.35rem;
-      justify-content: flex-end;
-      padding-right: 0.35rem;
-      min-width: 90px;
+      gap: 0.75rem;
+      margin-top: 1rem;
     }
 
-    .save-btn {
-      padding: 0.25rem 0.45rem;
-      border: 1px solid var(--line-white);
-      border-radius: 6px;
-      background: transparent;
-      color: var(--text-muted);
-      font-size: 0.7rem;
+    .btn-save {
+      flex: 1;
+      padding: 0.75rem;
+      border: none;
+      border-radius: 8px;
+      background: var(--accent);
+      color: #fff;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
       cursor: pointer;
-      white-space: nowrap;
     }
 
-    .save-btn:hover { border-color: var(--accent); color: var(--accent); }
-
-    .save-status {
-      font-size: 0.68rem;
-      white-space: nowrap;
-      min-width: 52px;
-      text-align: left;
-    }
-
+    .save-status { font-size: 0.8rem; min-width: 80px; }
     .save-status.saving { color: var(--text-muted); }
     .save-status.saved { color: var(--success); }
     .save-status.error { color: var(--error); }
 
-    .load-status {
-      font-size: 0.82rem;
-      color: var(--text-muted);
-      margin-bottom: 0.5rem;
-    }
+    .actions { display: flex; flex-wrap: wrap; gap: 0.75rem; margin-bottom: 1.25rem; }
 
-    .load-status.error { color: var(--error); }
-
-    /* Botones principales */
-    .actions {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 0.75rem;
-      margin-bottom: 1.25rem;
+    .btn-primary, .btn-secondary {
+      flex: 1 1 auto;
+      padding: 0.85rem 1.5rem;
+      border-radius: 10px;
+      font-weight: 700;
+      cursor: pointer;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
     }
 
     .btn-primary {
-      flex: 1 1 auto;
-      padding: 0.85rem 1.5rem;
       border: none;
-      border-radius: 10px;
       background: var(--accent);
       color: #fff;
-      font-family: 'Arial Narrow', 'Franklin Gothic Medium Condensed', sans-serif;
-      font-stretch: condensed;
-      font-size: 1.15rem;
-      font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: 0.06em;
-      cursor: pointer;
-      transition: background 0.15s;
+      font-size: 1.1rem;
     }
-
-    .btn-primary:hover { background: var(--accent-hover); }
-    .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
 
     .btn-secondary {
-      flex: 1 1 auto;
-      padding: 0.85rem 1.5rem;
       border: 2px solid var(--accent);
-      border-radius: 10px;
       background: transparent;
       color: var(--accent);
-      font-family: inherit;
-      font-size: 1rem;
-      font-weight: 600;
-      cursor: pointer;
-      transition: background 0.15s;
     }
 
-    .btn-secondary:hover { background: rgba(232, 98, 44, 0.15); }
     .btn-secondary:disabled { opacity: 0.4; cursor: not-allowed; }
 
-    /* Resultados */
     #results { display: none; }
     #results.visible { display: block; }
 
-    .teams-grid {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 0.75rem;
-      margin-bottom: 1rem;
-    }
+    .teams-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; margin-bottom: 1rem; }
+    @media (max-width: 500px) { .teams-grid { grid-template-columns: 1fr; } }
 
-    @media (max-width: 500px) {
-      .teams-grid { grid-template-columns: 1fr; }
-    }
-
-    .team-box {
-      border-radius: 10px;
-      padding: 0.85rem 1rem;
-    }
-
-    .team-box.claro {
-      background: rgba(245, 230, 200, 0.12);
-      border: 2px solid var(--team-claro-stroke);
-    }
-
-    .team-box.oscuro {
-      background: rgba(26, 39, 68, 0.5);
-      border: 2px solid var(--team-oscuro-stroke);
-    }
+    .team-box { border-radius: 10px; padding: 0.85rem 1rem; }
+    .team-box.claro { background: rgba(245,230,200,0.12); border: 2px solid var(--team-claro-stroke); }
+    .team-box.oscuro { background: rgba(26,39,68,0.5); border: 2px solid var(--team-oscuro-stroke); }
 
     .team-box h3 {
-      font-family: 'Arial Narrow', 'Franklin Gothic Medium Condensed', sans-serif;
-      font-stretch: condensed;
+      font-family: 'Arial Narrow', sans-serif;
       text-transform: uppercase;
-      letter-spacing: 0.06em;
       font-size: 1rem;
       margin-bottom: 0.5rem;
     }
@@ -334,73 +361,28 @@
     .team-box.claro h3 { color: var(--team-claro); }
     .team-box.oscuro h3 { color: #7a9ec8; }
 
-    .team-box ul {
-      list-style: none;
-      font-size: 0.88rem;
-    }
+    .team-box ul { list-style: none; font-size: 0.88rem; }
+    .team-box li { padding: 0.2rem 0; border-bottom: 1px solid rgba(255,255,255,0.06); display: flex; justify-content: space-between; }
+    .team-ovr { color: var(--text-muted); font-size: 0.78rem; }
 
-    .team-box li {
-      padding: 0.15rem 0;
-      border-bottom: 1px solid rgba(255,255,255,0.06);
-    }
-
-    .sobrantes {
-      margin-top: 0.5rem;
-      font-size: 0.85rem;
-      color: var(--text-muted);
-    }
-
+    .sobrantes { margin-top: 0.5rem; font-size: 0.85rem; color: var(--text-muted); }
     .sobrantes strong { color: var(--warning); }
 
-    /* Radar */
-    .radar-wrap {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      gap: 0.75rem;
-    }
-
-    .radar-legend {
-      display: flex;
-      gap: 1.5rem;
-      font-size: 0.85rem;
-    }
-
-    .legend-item {
-      display: flex;
-      align-items: center;
-      gap: 0.4rem;
-    }
-
-    .legend-swatch {
-      width: 16px;
-      height: 16px;
-      border-radius: 3px;
-      opacity: 0.7;
-    }
-
+    .radar-wrap { display: flex; flex-direction: column; align-items: center; gap: 0.75rem; }
+    .radar-legend { display: flex; gap: 1.5rem; font-size: 0.85rem; }
+    .legend-item { display: flex; align-items: center; gap: 0.4rem; }
+    .legend-swatch { width: 16px; height: 16px; border-radius: 3px; opacity: 0.7; }
     .legend-swatch.claro { background: var(--team-claro); }
     .legend-swatch.oscuro { background: #4a6fa5; }
-
-    #radar-svg {
-      width: 100%;
-      max-width: 340px;
-      height: auto;
-    }
-
-    .cost-info {
-      text-align: center;
-      font-size: 0.78rem;
-      color: var(--text-muted);
-      margin-top: 0.5rem;
-    }
+    #radar-svg { width: 100%; max-width: 340px; height: auto; }
+    .cost-info { text-align: center; font-size: 0.78rem; color: var(--text-muted); }
   </style>
 </head>
 <body>
   <div class="container">
     <header>
       <h1>3er Tiempo</h1>
-      <p class="subtitle">Equipos parejos entre amigos</p>
+      <p class="subtitle">Cartas FIFA · Equipos parejos</p>
     </header>
 
     <section class="card">
@@ -415,25 +397,9 @@
     </section>
 
     <section class="card">
-      <h2>Roster de jugadores</h2>
+      <h2>Plantilla</h2>
       <p class="load-status" id="load-status">Cargando jugadores…</p>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Nombre</th>
-              <th>Marca</th>
-              <th>Físico</th>
-              <th>Habilidad</th>
-              <th>Remate</th>
-              <th>Disparo</th>
-              <th>Arco</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody id="players-tbody"></tbody>
-        </table>
-      </div>
+      <div class="players-grid" id="players-grid"></div>
     </section>
 
     <div class="actions">
@@ -454,7 +420,6 @@
         </div>
       </div>
       <p class="sobrantes" id="sobrantes-info"></p>
-
       <h2 style="margin-top:1.25rem">Rendimiento</h2>
       <div class="radar-wrap">
         <div class="radar-legend">
@@ -467,15 +432,39 @@
     </section>
   </div>
 
+  <!-- Modal editor -->
+  <div class="modal-overlay" id="modal-overlay">
+    <div class="modal">
+      <div class="modal-header">
+        <h3 id="modal-title">Editar jugador</h3>
+        <button class="modal-close" id="modal-close" aria-label="Cerrar">&times;</button>
+      </div>
+      <div class="modal-preview" id="modal-preview"></div>
+      <form id="player-form"></form>
+      <div class="modal-footer">
+        <button type="button" class="btn-save" id="btn-save">Guardar cambios</button>
+        <span class="save-status" id="modal-save-status"></span>
+      </div>
+    </div>
+  </div>
+
   <script>
-    // ─── Config ───────────────────────────────────────────────────────────
     const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/TU_ID_AQUI/exec';
 
-    const ATTRS = ['marca', 'fisico', 'habilidad', 'remate', 'disparo', 'arco'];
-    const ATTR_LABELS = ['Marca', 'Físico', 'Habilidad', 'Remate', 'Disparo', 'Arco'];
+    const STAT_FIELDS = [
+      'vel_fis', 'resistencia', 'fuerza',
+      'regate', 'pase_corto', 'pase_largo', 'posicionamiento', 'remate',
+      'marca',
+      'atajar', 'reflejos', 'salidas'
+    ];
 
-    const ATTR_WEIGHTS = {
-      marca: 1, fisico: 1, habilidad: 1, remate: 1, disparo: 1, arco: 0.6
+    const CARD_ATTRS = ['velocidad', 'tiro', 'pase', 'regate', 'defensa', 'fisico'];
+    const CARD_LABELS = ['RIT', 'TIR', 'PAS', 'REG', 'DEF', 'FÍS'];
+    const CARD_LABELS_FULL = ['Velocidad', 'Tiro', 'Pase', 'Regate', 'Defensa', 'Físico'];
+
+    const BALANCE_ATTRS = [...CARD_ATTRS, 'portero'];
+    const BALANCE_WEIGHTS = {
+      velocidad: 1, tiro: 1, pase: 1, regate: 1, defensa: 1, fisico: 1, portero: 0.6
     };
 
     const DEFAULT_NAMES = [
@@ -484,20 +473,86 @@
       'Juampi', 'Chifi', 'Matías'
     ];
 
+    const POSICIONES = ['ARQ', 'DEF', 'MED', 'DEL', 'LIB'];
+    const PIES = ['Derecho', 'Izquierdo', 'Ambidiestro'];
+
     const ITERATIONS = 600;
     const TOP_N = 5;
 
-    // ─── State ────────────────────────────────────────────────────────────
     let players = [];
     let teamSize = 9;
     let lastTopCombos = [];
+    let editingIdx = -1;
 
-    // ─── Init ─────────────────────────────────────────────────────────────
+    function avg(...vals) {
+      const v = vals.filter(n => !isNaN(n));
+      return v.length ? v.reduce((a, b) => a + b, 0) / v.length : 1;
+    }
+
+    function roundStat(n) {
+      return Math.max(1, Math.min(5, Math.round(n)));
+    }
+
+    function defaultPlayer(nombre) {
+      const p = {
+        nombre,
+        posicion: 'MED',
+        edad: 30,
+        altura: 175,
+        pie_habil: 'Derecho'
+      };
+      STAT_FIELDS.forEach(f => { p[f] = 3; });
+      return p;
+    }
+
+    function computeCard(p) {
+      const velocidad = p.vel_fis;
+      const fisico = roundStat(avg(p.resistencia, p.fuerza));
+      const regate = p.regate;
+      const pase = roundStat(avg(p.pase_corto, p.pase_largo));
+      const tiro = p.remate;
+      const defensa = roundStat(avg(p.marca, p.posicionamiento));
+      const portero = roundStat(avg(p.atajar, p.reflejos, p.salidas));
+      const cardStats = [velocidad, tiro, pase, regate, defensa, fisico];
+      const media = Math.round(avg(...cardStats) * 20);
+      return { velocidad, tiro, pase, regate, defensa, fisico, portero, media, cardStats };
+    }
+
+    function tierClass(media) {
+      if (media >= 70) return 'tier-gold';
+      if (media >= 55) return 'tier-silver';
+      return 'tier-bronze';
+    }
+
+    function buildFifaCardHtml(p, clickable) {
+      const c = computeCard(p);
+      const cls = tierClass(c.media);
+      return `
+        <div class="fifa-card ${cls}" ${clickable ? '' : ''}>
+          <div class="fifa-card-top">
+            <div class="fifa-ovr">${c.media}</div>
+            <div class="fifa-pos">${p.posicion || 'MED'}</div>
+          </div>
+          <div class="fifa-name">${p.nombre}</div>
+          <div class="fifa-stats">
+            ${CARD_LABELS.map((lbl, i) =>
+              `<div class="fifa-stat"><abbr title="${CARD_LABELS_FULL[i]}">${lbl}</abbr><span>${c.cardStats[i]}</span></div>`
+            ).join('')}
+          </div>
+          <div class="fifa-meta">${p.edad}a · ${p.altura}cm · ${p.pie_habil}</div>
+        </div>`;
+    }
+
     document.addEventListener('DOMContentLoaded', () => {
       initFormatButtons();
       loadPlayers();
       document.getElementById('btn-armar').addEventListener('click', () => armarEquipos(false));
       document.getElementById('btn-barajar').addEventListener('click', () => armarEquipos(true));
+      document.getElementById('modal-close').addEventListener('click', closeModal);
+      document.getElementById('modal-overlay').addEventListener('click', e => {
+        if (e.target.id === 'modal-overlay') closeModal();
+      });
+      document.getElementById('btn-save').addEventListener('click', () => savePlayer(editingIdx));
     });
 
     function initFormatButtons() {
@@ -514,126 +569,176 @@
 
     function updateFormatWarning() {
       const needed = teamSize * 2;
-      const count = players.length;
-      const diff = count - needed;
+      const diff = players.length - needed;
       const box = document.getElementById('format-warning');
-
-      if (diff === 0) {
-        box.classList.remove('visible');
-        return;
-      }
-
+      if (diff === 0) { box.classList.remove('visible'); return; }
       box.classList.add('visible');
-      if (diff > 0) {
-        box.textContent = `⚠ Hay ${count} jugadores pero el formato ${teamSize} necesita ${needed}. Sobran ${diff} (quedarán fuera del partido).`;
-      } else {
-        box.textContent = `⚠ Hay ${count} jugadores pero el formato ${teamSize} necesita ${needed}. Faltan ${Math.abs(diff)}.`;
-      }
+      box.textContent = diff > 0
+        ? `⚠ ${players.length} jugadores, formato ${teamSize} necesita ${needed}. Sobran ${diff}.`
+        : `⚠ Faltan ${Math.abs(diff)} jugadores para formato ${teamSize}.`;
     }
 
-    // ─── Google Sheets sync ───────────────────────────────────────────────
     async function loadPlayers() {
       const status = document.getElementById('load-status');
       status.textContent = 'Cargando jugadores…';
       status.classList.remove('error');
 
       try {
-        if (APPS_SCRIPT_URL.includes('TU_ID_AQUI')) {
-          throw new Error('offline');
-        }
+        if (APPS_SCRIPT_URL.includes('TU_ID_AQUI')) throw new Error('offline');
         const res = await fetch(APPS_SCRIPT_URL);
         const data = await res.json();
-        if (!data.ok || !Array.isArray(data.players)) throw new Error('Respuesta inválida');
-        players = data.players;
+        if (!data.ok || !Array.isArray(data.players)) throw new Error('invalid');
+        players = data.players.map(normalizePlayer);
         status.textContent = `${players.length} jugadores cargados desde la planilla.`;
       } catch {
-        players = DEFAULT_NAMES.map(nombre => ({
-          nombre,
-          marca: 3, fisico: 3, habilidad: 3, remate: 3, disparo: 3, arco: 3
-        }));
+        players = DEFAULT_NAMES.map(defaultPlayer);
         status.textContent = APPS_SCRIPT_URL.includes('TU_ID_AQUI')
-          ? 'Modo local: configurá APPS_SCRIPT_URL para sincronizar con Google Sheets.'
-          : 'No se pudo conectar. Mostrando datos locales.';
+          ? 'Modo local: configurá APPS_SCRIPT_URL para sincronizar.'
+          : 'Sin conexión. Datos locales.';
         status.classList.add('error');
       }
 
-      renderTable();
+      renderGrid();
       updateFormatWarning();
     }
 
-    function renderTable() {
-      const tbody = document.getElementById('players-tbody');
-      tbody.innerHTML = '';
+    function normalizePlayer(p) {
+      const out = defaultPlayer(p.nombre || 'Jugador');
+      out.posicion = p.posicion || out.posicion;
+      out.edad = Number(p.edad) || out.edad;
+      out.altura = Number(p.altura) || out.altura;
+      out.pie_habil = p.pie_habil || out.pie_habil;
+      STAT_FIELDS.forEach(f => {
+        out[f] = roundStat(Number(p[f]) || 3);
+      });
+      return out;
+    }
 
+    function renderGrid() {
+      const grid = document.getElementById('players-grid');
+      grid.innerHTML = '';
       players.forEach((p, idx) => {
-        const tr = document.createElement('tr');
-        tr.dataset.idx = idx;
-
-        const tdName = document.createElement('td');
-        tdName.textContent = p.nombre;
-        tr.appendChild(tdName);
-
-        ATTRS.forEach(attr => {
-          const td = document.createElement('td');
-          const input = document.createElement('input');
-          input.type = 'number';
-          input.min = 1;
-          input.max = 5;
-          input.step = 1;
-          input.className = 'attr-input';
-          input.dataset.attr = attr;
-          input.value = p[attr];
-          input.addEventListener('blur', () => {
-            clampAndSync(input, idx);
-            savePlayer(idx);
-          });
-          input.addEventListener('change', () => clampAndSync(input, idx));
-          td.appendChild(input);
-          tr.appendChild(td);
-        });
-
-        const tdActions = document.createElement('td');
-        tdActions.className = 'row-actions';
-        const saveBtn = document.createElement('button');
-        saveBtn.className = 'save-btn';
-        saveBtn.textContent = 'Guardar';
-        saveBtn.addEventListener('click', () => savePlayer(idx));
-        const statusSpan = document.createElement('span');
-        statusSpan.className = 'save-status';
-        statusSpan.id = `status-${idx}`;
-        tdActions.appendChild(saveBtn);
-        tdActions.appendChild(statusSpan);
-        tr.appendChild(tdActions);
-
-        tbody.appendChild(tr);
+        const wrap = document.createElement('div');
+        wrap.innerHTML = buildFifaCardHtml(p, true);
+        const card = wrap.firstElementChild;
+        card.addEventListener('click', () => openEditor(idx));
+        grid.appendChild(card);
       });
     }
 
-    function clampAndSync(input, idx) {
-      let val = Math.round(Number(input.value));
-      if (isNaN(val) || val < 1) val = 1;
-      if (val > 5) val = 5;
-      input.value = val;
-      players[idx][input.dataset.attr] = val;
+    function openEditor(idx) {
+      editingIdx = idx;
+      const p = players[idx];
+      document.getElementById('modal-title').textContent = p.nombre;
+      document.getElementById('modal-preview').innerHTML = buildFifaCardHtml(p, false);
+      document.getElementById('modal-save-status').textContent = '';
+      document.getElementById('modal-save-status').className = 'save-status';
+
+      const form = document.getElementById('player-form');
+      form.innerHTML = `
+        <div class="form-section">
+          <h4>Datos personales</h4>
+          <div class="form-grid cols-3">
+            <div class="field"><label>Edad</label><input type="number" name="edad" min="15" max="60" value="${p.edad}"></div>
+            <div class="field"><label>Altura (cm)</label><input type="number" name="altura" min="150" max="210" value="${p.altura}"></div>
+            <div class="field"><label>Pie hábil</label>
+              <select name="pie_habil">${PIES.map(x => `<option ${p.pie_habil === x ? 'selected' : ''}>${x}</option>`).join('')}</select>
+            </div>
+          </div>
+        </div>
+        <div class="form-section">
+          <h4>Posición</h4>
+          <div class="field">
+            <select name="posicion">${POSICIONES.map(x => `<option ${p.posicion === x ? 'selected' : ''}>${x}</option>`).join('')}</select>
+          </div>
+        </div>
+        <div class="form-section">
+          <h4>Físico</h4>
+          <div class="form-grid cols-3">
+            ${statField('vel_fis', 'Velocidad', p)}
+            ${statField('resistencia', 'Resistencia', p)}
+            ${statField('fuerza', 'Fuerza', p)}
+          </div>
+        </div>
+        <div class="form-section">
+          <h4>Técnicos</h4>
+          <div class="form-grid">
+            ${statField('regate', 'Regate', p)}
+            ${statField('pase_corto', 'Pase corto', p)}
+            ${statField('pase_largo', 'Pase largo', p)}
+            ${statField('posicionamiento', 'Posicionamiento', p)}
+            ${statField('remate', 'Remate', p)}
+          </div>
+        </div>
+        <div class="form-section">
+          <h4>Defensivo</h4>
+          <div class="form-grid">
+            ${statField('marca', 'Marca', p)}
+          </div>
+        </div>
+        <div class="form-section">
+          <h4>Portero <span style="font-weight:normal;text-transform:none;color:var(--text-muted)">(rotación en el arco)</span></h4>
+          <div class="form-grid cols-3">
+            ${statField('atajar', 'Atajar', p)}
+            ${statField('reflejos', 'Reflejos', p)}
+            ${statField('salidas', 'Salidas', p)}
+          </div>
+        </div>`;
+
+      form.querySelectorAll('input[type=number][data-stat]').forEach(input => {
+        input.addEventListener('input', updateModalPreview);
+        input.addEventListener('change', updateModalPreview);
+      });
+      form.querySelectorAll('select, input:not([data-stat])').forEach(el => {
+        el.addEventListener('change', updateModalPreview);
+      });
+
+      document.getElementById('modal-overlay').classList.add('open');
     }
 
-    function getRowData(idx) {
-      const tr = document.querySelector(`tr[data-idx="${idx}"]`);
-      const data = { nombre: players[idx].nombre };
-      tr.querySelectorAll('.attr-input').forEach(input => {
-        data[input.dataset.attr] = Number(input.value);
+    function statField(key, label, p) {
+      return `<div class="field"><label>${label}</label>
+        <input type="number" name="${key}" data-stat min="1" max="5" step="1" value="${p[key]}"></div>`;
+    }
+
+    function readFormData() {
+      const form = document.getElementById('player-form');
+      const p = { nombre: players[editingIdx].nombre };
+      p.edad = Number(form.querySelector('[name=edad]').value) || 30;
+      p.altura = Number(form.querySelector('[name=altura]').value) || 175;
+      p.pie_habil = form.querySelector('[name=pie_habil]').value;
+      p.posicion = form.querySelector('[name=posicion]').value;
+      STAT_FIELDS.forEach(f => {
+        let v = roundStat(Number(form.querySelector(`[name=${f}]`).value));
+        p[f] = v;
+        form.querySelector(`[name=${f}]`).value = v;
       });
-      return data;
+      return p;
+    }
+
+    function updateModalPreview() {
+      if (editingIdx < 0) return;
+      const merged = { ...players[editingIdx], ...readFormData() };
+      document.getElementById('modal-preview').innerHTML = buildFifaCardHtml(merged, false);
+    }
+
+    function closeModal() {
+      document.getElementById('modal-overlay').classList.remove('open');
+      editingIdx = -1;
     }
 
     async function savePlayer(idx) {
-      const statusEl = document.getElementById(`status-${idx}`);
-      const data = getRowData(idx);
+      if (idx < 0) return;
+      const data = readFormData();
       Object.assign(players[idx], data);
+
+      const statusEl = document.getElementById('modal-save-status');
+      renderGrid();
 
       if (APPS_SCRIPT_URL.includes('TU_ID_AQUI')) {
         statusEl.textContent = 'local';
         statusEl.className = 'save-status saved';
+        updateModalPreview();
         return;
       }
 
@@ -648,10 +753,9 @@
           body: JSON.stringify(data)
         });
         const result = await res.json();
-        if (!result.ok) throw new Error(result.error || 'Error al guardar');
+        if (!result.ok) throw new Error(result.error);
         statusEl.textContent = 'guardado';
         statusEl.className = 'save-status saved';
-        setTimeout(() => { statusEl.textContent = ''; statusEl.className = 'save-status'; }, 2500);
       } catch {
         try {
           await fetch(APPS_SCRIPT_URL, {
@@ -662,15 +766,23 @@
           });
           statusEl.textContent = 'guardado';
           statusEl.className = 'save-status saved';
-          setTimeout(() => { statusEl.textContent = ''; statusEl.className = 'save-status'; }, 2500);
         } catch {
           statusEl.textContent = 'error';
           statusEl.className = 'save-status error';
         }
       }
+      updateModalPreview();
     }
 
-    // ─── Team balancing ───────────────────────────────────────────────────
+    function getBalanceValue(p, attr) {
+      return computeCard(p)[attr];
+    }
+
+    function teamAverage(team, attr) {
+      if (!team.length) return 0;
+      return team.reduce((s, p) => s + getBalanceValue(p, attr), 0) / team.length;
+    }
+
     function shuffle(arr) {
       const a = arr.slice();
       for (let i = a.length - 1; i > 0; i--) {
@@ -680,16 +792,10 @@
       return a;
     }
 
-    function teamAverage(team, attr) {
-      if (!team.length) return 0;
-      return team.reduce((s, p) => s + p[attr], 0) / team.length;
-    }
-
     function comboCost(teamA, teamB) {
       let cost = 0;
-      for (const attr of ATTRS) {
-        const diff = Math.abs(teamAverage(teamA, attr) - teamAverage(teamB, attr));
-        cost += diff * ATTR_WEIGHTS[attr];
+      for (const attr of BALANCE_ATTRS) {
+        cost += Math.abs(teamAverage(teamA, attr) - teamAverage(teamB, attr)) * BALANCE_WEIGHTS[attr];
       }
       return cost;
     }
@@ -702,23 +808,19 @@
       const n = effectiveTeamSize();
       if (n < 1) return [];
       const results = [];
-
       for (let i = 0; i < ITERATIONS; i++) {
         const shuffled = shuffle(players);
         const teamA = shuffled.slice(0, n);
         const teamB = shuffled.slice(n, n * 2);
         const sobrantes = shuffled.slice(n * 2);
-        const cost = comboCost(teamA, teamB);
-        results.push({ teamA, teamB, sobrantes, cost });
+        results.push({ teamA, teamB, sobrantes, cost: comboCost(teamA, teamB) });
       }
-
       results.sort((a, b) => a.cost - b.cost);
       return results.slice(0, TOP_N);
     }
 
     function armarEquipos(rebarajar) {
       if (effectiveTeamSize() < 1) return;
-
       let combo;
       if (rebarajar && lastTopCombos.length) {
         combo = lastTopCombos[Math.floor(Math.random() * lastTopCombos.length)];
@@ -726,7 +828,6 @@
         lastTopCombos = findBestCombos();
         combo = lastTopCombos[Math.floor(Math.random() * lastTopCombos.length)];
       }
-
       renderResults(combo);
       document.getElementById('results').classList.add('visible');
       document.getElementById('btn-barajar').disabled = false;
@@ -735,72 +836,57 @@
     function renderResults({ teamA, teamB, sobrantes, cost }) {
       fillTeamList('team-claro-list', teamA);
       fillTeamList('team-oscuro-list', teamB);
-
       const sobEl = document.getElementById('sobrantes-info');
-      if (sobrantes.length) {
-        sobEl.innerHTML = `<strong>Fuera del partido:</strong> ${sobrantes.map(p => p.nombre).join(', ')}`;
-      } else {
-        sobEl.textContent = '';
-      }
-
+      sobEl.innerHTML = sobrantes.length
+        ? `<strong>Fuera:</strong> ${sobrantes.map(p => p.nombre).join(', ')}`
+        : '';
       drawRadar(teamA, teamB);
-
-      const diffs = ATTRS.map(a => {
+      const diffs = CARD_ATTRS.map((a, i) => {
         const d = Math.abs(teamAverage(teamA, a) - teamAverage(teamB, a)).toFixed(2);
-        return `${ATTR_LABELS[ATTRS.indexOf(a)]}: ${d}`;
+        return `${CARD_LABELS_FULL[i]}: ${d}`;
       });
       document.getElementById('cost-info').textContent =
-        `Costo total: ${cost.toFixed(3)} · Diferencias por atributo: ${diffs.join(' · ')}`;
+        `Costo: ${cost.toFixed(3)} · ${diffs.join(' · ')} · Portero: ${Math.abs(teamAverage(teamA, 'portero') - teamAverage(teamB, 'portero')).toFixed(2)}`;
     }
 
     function fillTeamList(id, team) {
-      const ul = document.getElementById(id);
-      ul.innerHTML = team.map(p => `<li>${p.nombre}</li>`).join('');
+      document.getElementById(id).innerHTML = team.map(p => {
+        const c = computeCard(p);
+        return `<li><span>${p.nombre} <small class="team-ovr">${p.posicion}</small></span><span class="team-ovr">${c.media}</span></li>`;
+      }).join('');
     }
 
-    // ─── Radar chart (SVG) ────────────────────────────────────────────────
     function drawRadar(teamA, teamB) {
       const svg = document.getElementById('radar-svg');
       const cx = 150, cy = 150, maxR = 110;
       const minVal = 1, maxVal = 5;
-      const numAxes = ATTRS.length;
+      const n = CARD_ATTRS.length;
 
-      function pointFor(value, axisIndex) {
-        const angle = (Math.PI * 2 * axisIndex / numAxes) - Math.PI / 2;
+      function pointFor(value, i) {
+        const angle = (Math.PI * 2 * i / n) - Math.PI / 2;
         const r = ((value - minVal) / (maxVal - minVal)) * maxR;
         return { x: cx + r * Math.cos(angle), y: cy + r * Math.sin(angle) };
       }
 
-      function polygonPoints(team) {
-        return ATTRS.map((attr, i) => {
-          const pt = pointFor(teamAverage(team, attr), i);
+      function poly(team) {
+        return CARD_ATTRS.map((a, i) => {
+          const pt = pointFor(teamAverage(team, a), i);
           return `${pt.x},${pt.y}`;
         }).join(' ');
       }
 
       let html = '';
-
-      // Grid rings
       for (let level = 1; level <= 5; level++) {
-        const pts = ATTRS.map((_, i) => {
-          const p = pointFor(level, i);
-          return `${p.x},${p.y}`;
-        }).join(' ');
-        html += `<polygon points="${pts}" fill="none" stroke="rgba(255,255,255,0.1)" stroke-width="1"/>`;
+        html += `<polygon points="${CARD_ATTRS.map((_, i) => { const p = pointFor(level, i); return `${p.x},${p.y}`; }).join(' ')}" fill="none" stroke="rgba(255,255,255,0.1)" stroke-width="1"/>`;
       }
-
-      // Axes
-      ATTRS.forEach((_, i) => {
+      CARD_ATTRS.forEach((_, i) => {
         const outer = pointFor(maxVal, i);
         html += `<line x1="${cx}" y1="${cy}" x2="${outer.x}" y2="${outer.y}" stroke="rgba(255,255,255,0.15)" stroke-width="1"/>`;
-        const labelPt = pointFor(maxVal + 0.55, i);
-        html += `<text x="${labelPt.x}" y="${labelPt.y}" text-anchor="middle" dominant-baseline="middle" fill="#a8b5a8" font-size="10" font-family="sans-serif">${ATTR_LABELS[i]}</text>`;
+        const lbl = pointFor(maxVal + 0.55, i);
+        html += `<text x="${lbl.x}" y="${lbl.y}" text-anchor="middle" dominant-baseline="middle" fill="#a8b5a8" font-size="10">${CARD_LABELS_FULL[i]}</text>`;
       });
-
-      // Team polygons
-      html += `<polygon points="${polygonPoints(teamB)}" fill="rgba(74,111,165,0.45)" stroke="#3d5a80" stroke-width="2"/>`;
-      html += `<polygon points="${polygonPoints(teamA)}" fill="rgba(245,230,200,0.4)" stroke="#d4b896" stroke-width="2"/>`;
-
+      html += `<polygon points="${poly(teamB)}" fill="rgba(74,111,165,0.45)" stroke="#3d5a80" stroke-width="2"/>`;
+      html += `<polygon points="${poly(teamA)}" fill="rgba(245,230,200,0.4)" stroke="#d4b896" stroke-width="2"/>`;
       svg.innerHTML = html;
     }
   </script>

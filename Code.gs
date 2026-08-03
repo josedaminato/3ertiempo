@@ -1,14 +1,71 @@
 /**
  * 3er tiempo — Backend Google Apps Script
- * Hoja esperada: fila 1 = encabezados → Nombre | Marca | Fisico | Habilidad | Remate | Disparo | Arco
+ * Columnas (fila 1):
+ * Nombre | Posicion | Edad | Altura | Pie_habil |
+ * Vel_fis | Resistencia | Fuerza |
+ * Regate | Pase_corto | Pase_largo | Posicionamiento | Remate |
+ * Marca |
+ * Atajar | Reflejos | Salidas
  */
 
-var SHEET_NAME = 'Jugadores'; // Cambiar si tu hoja tiene otro nombre
+var SHEET_NAME = 'Jugadores';
+
+var STAT_FIELDS = [
+  'vel_fis', 'resistencia', 'fuerza',
+  'regate', 'pase_corto', 'pase_largo', 'posicionamiento', 'remate',
+  'marca',
+  'atajar', 'reflejos', 'salidas'
+];
+
+var COL = {
+  nombre: 0,
+  posicion: 1,
+  edad: 2,
+  altura: 3,
+  pie_habil: 4,
+  vel_fis: 5,
+  resistencia: 6,
+  fuerza: 7,
+  regate: 8,
+  pase_corto: 9,
+  pase_largo: 10,
+  posicionamiento: 11,
+  remate: 12,
+  marca: 13,
+  atajar: 14,
+  reflejos: 15,
+  salidas: 16
+};
 
 function getSheet_() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var sheet = ss.getSheetByName(SHEET_NAME) || ss.getSheets()[0];
-  return sheet;
+  return ss.getSheetByName(SHEET_NAME) || ss.getSheets()[0];
+}
+
+function readStat_(row, key) {
+  var val = Number(row[COL[key]]);
+  if (isNaN(val) || val < 1) return 1;
+  if (val > 5) return 5;
+  return Math.round(val);
+}
+
+function rowToPlayer_(row) {
+  var nombre = String(row[COL.nombre] || '').trim();
+  if (!nombre) return null;
+
+  var player = {
+    nombre: nombre,
+    posicion: String(row[COL.posicion] || 'MED').trim(),
+    edad: Number(row[COL.edad]) || 30,
+    altura: Number(row[COL.altura]) || 175,
+    pie_habil: String(row[COL.pie_habil] || 'Derecho').trim()
+  };
+
+  for (var i = 0; i < STAT_FIELDS.length; i++) {
+    player[STAT_FIELDS[i]] = readStat_(row, STAT_FIELDS[i]);
+  }
+
+  return player;
 }
 
 function doGet(e) {
@@ -17,19 +74,8 @@ function doGet(e) {
   var players = [];
 
   for (var i = 1; i < data.length; i++) {
-    var row = data[i];
-    var nombre = String(row[0] || '').trim();
-    if (!nombre) continue;
-
-    players.push({
-      nombre: nombre,
-      marca: Number(row[1]) || 1,
-      fisico: Number(row[2]) || 1,
-      habilidad: Number(row[3]) || 1,
-      remate: Number(row[4]) || 1,
-      disparo: Number(row[5]) || 1,
-      arco: Number(row[6]) || 1
-    });
+    var player = rowToPlayer_(data[i]);
+    if (player) players.push(player);
   }
 
   return ContentService
@@ -43,14 +89,14 @@ function doPost(e) {
     var nombre = String(body.nombre || '').trim();
 
     if (!nombre) {
-      return jsonResponse_({ ok: false, error: 'Falta el nombre del jugador' }, 400);
+      return jsonResponse_({ ok: false, error: 'Falta el nombre del jugador' });
     }
 
-    var attrs = ['marca', 'fisico', 'habilidad', 'remate', 'disparo', 'arco'];
-    for (var a = 0; a < attrs.length; a++) {
-      var val = Number(body[attrs[a]]);
+    for (var i = 0; i < STAT_FIELDS.length; i++) {
+      var key = STAT_FIELDS[i];
+      var val = Number(body[key]);
       if (isNaN(val) || val < 1 || val > 5) {
-        return jsonResponse_({ ok: false, error: 'Atributo inválido: ' + attrs[a] }, 400);
+        return jsonResponse_({ ok: false, error: 'Atributo inválido: ' + key });
       }
     }
 
@@ -58,75 +104,48 @@ function doPost(e) {
     var data = sheet.getDataRange().getValues();
     var rowIndex = -1;
 
-    for (var i = 1; i < data.length; i++) {
-      if (String(data[i][0] || '').trim() === nombre) {
-        rowIndex = i + 1; // filas en Sheets son 1-based
+    for (var r = 1; r < data.length; r++) {
+      if (String(data[r][COL.nombre] || '').trim() === nombre) {
+        rowIndex = r + 1;
         break;
       }
     }
 
     if (rowIndex === -1) {
-      return jsonResponse_({ ok: false, error: 'Jugador no encontrado: ' + nombre }, 404);
+      return jsonResponse_({ ok: false, error: 'Jugador no encontrado: ' + nombre });
     }
 
-    sheet.getRange(rowIndex, 2, 1, 6).setValues([[
-      Number(body.marca),
-      Number(body.fisico),
-      Number(body.habilidad),
-      Number(body.remate),
-      Number(body.disparo),
-      Number(body.arco)
-    ]]);
+    var rowValues = [
+      nombre,
+      String(body.posicion || 'MED').trim(),
+      Number(body.edad) || 30,
+      Number(body.altura) || 175,
+      String(body.pie_habil || 'Derecho').trim()
+    ];
+
+    for (var j = 0; j < STAT_FIELDS.length; j++) {
+      rowValues.push(Number(body[STAT_FIELDS[j]]));
+    }
+
+    sheet.getRange(rowIndex, 1, 1, rowValues.length).setValues([rowValues]);
 
     return jsonResponse_({ ok: true, nombre: nombre });
   } catch (err) {
-    return jsonResponse_({ ok: false, error: String(err) }, 500);
+    return jsonResponse_({ ok: false, error: String(err) });
   }
 }
 
-function jsonResponse_(obj, status) {
-  var output = ContentService
+function jsonResponse_(obj) {
+  return ContentService
     .createTextOutput(JSON.stringify(obj))
     .setMimeType(ContentService.MimeType.JSON);
-
-  // Apps Script no expone códigos HTTP directamente en Web Apps,
-  // pero el cuerpo JSON indica éxito o error.
-  return output;
 }
 
 /*
- * ═══════════════════════════════════════════════════════════════════
  * INSTRUCCIONES DE DESPLIEGUE
- * ═══════════════════════════════════════════════════════════════════
  *
- * 1. Crear una Google Sheet con estas columnas en la fila 1:
- *    Nombre | Marca | Fisico | Habilidad | Remate | Disparo | Arco
- *
- * 2. Cargar los 18 jugadores (filas 2 en adelante):
- *    Marcelo, Maxi, Turco, Gato, Mariano, Charly, Gonza, Ariel,
- *    Claudio, Cacho, Jorge, Jose, Claudio M, Seba, Marcos,
- *    Juampi, Chifi, Matías
- *    Valores iniciales sugeridos: 3 en cada atributo.
- *
- * 3. Extensiones → Apps Script → pegar este archivo Code.gs completo.
- *
- * 4. (Opcional) Si la hoja no se llama "Jugadores", cambiar SHEET_NAME arriba.
- *
- * 5. Implementar → Nueva implementación:
- *    - Tipo: Aplicación web
- *    - Descripción: 3er tiempo API
- *    - Ejecutar como: Yo (tu cuenta)
- *    - Quién tiene acceso: Cualquiera
- *
- * 6. Autorizar permisos cuando lo pida (acceso a la hoja de cálculo).
- *
- * 7. Copiar la URL de la aplicación web (termina en /exec).
- *
- * 8. Pegar esa URL en la constante APPS_SCRIPT_URL de index.html.
- *
- * 9. Subir index.html a un repo de GitHub y activar GitHub Pages
- *    (Settings → Pages → Source: rama main, carpeta /root).
- *
- * NOTA: Cada vez que modifiques Code.gs, creá una "Nueva implementación"
- *       para que los cambios se reflejen en la URL /exec.
+ * 1. Importar jugadores.csv en Google Sheets (pestaña "Jugadores").
+ * 2. Extensiones → Apps Script → pegar este código.
+ * 3. Implementar → Nueva implementación → Aplicación web → Cualquiera.
+ * 4. Copiar URL /exec en APPS_SCRIPT_URL de index.html.
  */
