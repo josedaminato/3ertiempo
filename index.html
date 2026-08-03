@@ -130,6 +130,26 @@
       transition: transform 0.15s, box-shadow 0.15s;
       color: #1a1208;
       overflow: hidden;
+      isolation: isolate;
+    }
+
+    .fifa-card-photo {
+      position: absolute;
+      right: -4%;
+      top: 8%;
+      width: 52%;
+      height: 58%;
+      object-fit: cover;
+      object-position: center top;
+      opacity: 0.92;
+      z-index: 0;
+      -webkit-mask-image: linear-gradient(to left, #000 55%, transparent 100%);
+      mask-image: linear-gradient(to left, #000 55%, transparent 100%);
+    }
+
+    .fifa-card-body {
+      position: relative;
+      z-index: 1;
     }
 
     .fifa-card:hover { transform: translateY(-3px); box-shadow: 0 8px 20px rgba(0,0,0,0.5); }
@@ -248,6 +268,56 @@
     .btn-add-player:hover { background: rgba(232, 98, 44, 0.15); }
 
     .field-full { grid-column: 1 / -1; }
+
+    .photo-section { text-align: center; }
+
+    .photo-preview-wrap {
+      width: 110px;
+      height: 110px;
+      margin: 0 auto 0.65rem;
+      border-radius: 10px;
+      overflow: hidden;
+      border: 2px solid var(--line-white);
+      background: rgba(0,0,0,0.3);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .photo-preview-wrap img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
+    .photo-placeholder {
+      font-size: 0.72rem;
+      color: var(--text-muted);
+      padding: 0.5rem;
+    }
+
+    .photo-preview-wrap.has-photo .photo-placeholder { display: none; }
+    .photo-preview-wrap:not(.has-photo) img { display: none; }
+
+    .btn-photo {
+      display: inline-block;
+      padding: 0.5rem 0.85rem;
+      border: 2px solid var(--accent);
+      border-radius: 8px;
+      color: var(--accent);
+      font-size: 0.78rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      cursor: pointer;
+    }
+
+    .btn-photo input { display: none; }
+
+    .photo-hint {
+      font-size: 0.68rem;
+      color: var(--text-muted);
+      margin-top: 0.45rem;
+    }
 
     /* Modal editor */
     .modal-overlay {
@@ -547,6 +617,8 @@
     let lastTopCombos = [];
     let editingIdx = -1;
     let isCreating = false;
+    let pendingPhoto = null;
+    const FOTO_STORAGE_KEY = '3ertiempo_fotos';
 
     function avg(...vals) {
       const v = vals.filter(n => !isNaN(n));
@@ -563,10 +635,118 @@
         posicion: 'MED',
         edad: 30,
         altura: 175,
-        pie_habil: 'Derecho'
+        pie_habil: 'Derecho',
+        foto_url: ''
       };
       STAT_FIELDS.forEach(f => { p[f] = 3; });
       return p;
+    }
+
+    function loadLocalPhotos() {
+      try { return JSON.parse(localStorage.getItem(FOTO_STORAGE_KEY) || '{}'); }
+      catch { return {}; }
+    }
+
+    function saveLocalPhoto(nombre, dataUrl) {
+      const all = loadLocalPhotos();
+      if (dataUrl) all[nombre] = dataUrl;
+      else delete all[nombre];
+      localStorage.setItem(FOTO_STORAGE_KEY, JSON.stringify(all));
+    }
+
+    function getPlayerPhoto(p) {
+      const url = p.foto_url || loadLocalPhotos()[p.nombre] || '';
+      return safePhotoUrl(url);
+    }
+
+    function safePhotoUrl(url) {
+      if (!url) return '';
+      if (url.startsWith('data:image/')) return url;
+      if (url.startsWith('http://') || url.startsWith('https://')) return url;
+      return '';
+    }
+
+    function applyLocalPhotos() {
+      const local = loadLocalPhotos();
+      players.forEach(p => {
+        if (!p.foto_url && local[p.nombre]) p.foto_url = local[p.nombre];
+      });
+    }
+
+    function resizeImageFile(file, maxSize) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+          const img = new Image();
+          img.onload = () => {
+            let w = img.width;
+            let h = img.height;
+            if (w > h) {
+              if (w > maxSize) { h = Math.round(h * maxSize / w); w = maxSize; }
+            } else if (h > maxSize) {
+              w = Math.round(w * maxSize / h);
+              h = maxSize;
+            }
+            const canvas = document.createElement('canvas');
+            canvas.width = w;
+            canvas.height = h;
+            canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+            const dataUrl = canvas.toDataURL('image/jpeg', 0.82);
+            resolve({
+              dataUrl,
+              base64: dataUrl.split(',')[1],
+              mimeType: 'image/jpeg'
+            });
+          };
+          img.onerror = reject;
+          img.src = reader.result;
+        };
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+    }
+
+    function updatePhotoPreview(url) {
+      const wrap = document.getElementById('photo-preview-wrap');
+      const img = document.getElementById('photo-preview');
+      if (!wrap || !img) return;
+      if (url) {
+        img.src = url;
+        wrap.classList.add('has-photo');
+      } else {
+        img.removeAttribute('src');
+        wrap.classList.remove('has-photo');
+      }
+    }
+
+    async function handlePhotoSelect(file) {
+      if (!file || !file.type.startsWith('image/')) return;
+      try {
+        pendingPhoto = await resizeImageFile(file, 400);
+        updatePhotoPreview(pendingPhoto.dataUrl);
+        updateModalPreview();
+      } catch {
+        alert('No se pudo cargar la imagen.');
+      }
+    }
+
+    async function uploadPhoto(nombre) {
+      if (!pendingPhoto) return null;
+      const res = await fetch(APPS_SCRIPT_URL, {
+        method: 'POST',
+        redirect: 'follow',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify({
+          action: 'uploadFoto',
+          nombre,
+          imageBase64: pendingPhoto.base64,
+          mimeType: pendingPhoto.mimeType
+        })
+      });
+      const result = await res.json();
+      if (!result.ok) throw new Error(result.error || 'Error al subir foto');
+      pendingPhoto = null;
+      return result.foto_url;
     }
 
     function computeCard(p) {
@@ -591,19 +771,26 @@
     function buildFifaCardHtml(p, clickable) {
       const c = computeCard(p);
       const cls = tierClass(c.media);
+      const photo = getPlayerPhoto(p);
+      const photoHtml = photo
+        ? `<img class="fifa-card-photo" src="${photo}" alt="" loading="lazy">`
+        : '';
       return `
         <div class="fifa-card ${cls}" ${clickable ? '' : ''}>
-          <div class="fifa-card-top">
-            <div class="fifa-ovr">${c.media}</div>
-            <div class="fifa-pos">${p.posicion || 'MED'}</div>
+          ${photoHtml}
+          <div class="fifa-card-body">
+            <div class="fifa-card-top">
+              <div class="fifa-ovr">${c.media}</div>
+              <div class="fifa-pos">${p.posicion || 'MED'}</div>
+            </div>
+            <div class="fifa-name">${p.nombre}</div>
+            <div class="fifa-stats">
+              ${CARD_LABELS.map((lbl, i) =>
+                `<div class="fifa-stat"><abbr title="${CARD_LABELS_FULL[i]}">${lbl}</abbr><span>${c.cardStats[i]}</span></div>`
+              ).join('')}
+            </div>
+            <div class="fifa-meta">${p.edad}a · ${p.altura}cm · ${p.pie_habil}</div>
           </div>
-          <div class="fifa-name">${p.nombre}</div>
-          <div class="fifa-stats">
-            ${CARD_LABELS.map((lbl, i) =>
-              `<div class="fifa-stat"><abbr title="${CARD_LABELS_FULL[i]}">${lbl}</abbr><span>${c.cardStats[i]}</span></div>`
-            ).join('')}
-          </div>
-          <div class="fifa-meta">${p.edad}a · ${p.altura}cm · ${p.pie_habil}</div>
         </div>`;
     }
 
@@ -657,6 +844,7 @@
         status.textContent = `${players.length} jugadores cargados desde la planilla.`;
       } catch {
         players = DEFAULT_NAMES.map(defaultPlayer);
+        applyLocalPhotos();
         status.textContent = APPS_SCRIPT_URL.includes('TU_ID_AQUI')
           ? 'Modo local: configurá APPS_SCRIPT_URL para sincronizar.'
           : 'Sin conexión. Datos locales.';
@@ -673,6 +861,7 @@
       out.edad = Number(p.edad) || out.edad;
       out.altura = Number(p.altura) || out.altura;
       out.pie_habil = p.pie_habil || out.pie_habil;
+      out.foto_url = p.foto_url || '';
       STAT_FIELDS.forEach(f => {
         out[f] = roundStat(Number(p[f]) || 3);
       });
@@ -708,6 +897,22 @@
         : '';
 
       return `${nameField}
+        <div class="form-section photo-section">
+          <h4>Foto</h4>
+          <div class="photo-preview-wrap" id="photo-preview-wrap">
+            <img id="photo-preview" alt="">
+            <span class="photo-placeholder">Sin foto</span>
+          </div>
+          <label class="btn-photo">
+            Elegir foto
+            <input type="file" id="photo-input" accept="image/*" capture="user">
+          </label>
+          <p class="photo-hint">Desde la galería o cámara del celular</p>
+          <div class="field field-full" style="margin-top:0.65rem">
+            <label>Link de imagen (opcional)</label>
+            <input type="url" name="foto_url" placeholder="https://..." value="${p.foto_url || ''}">
+          </div>
+        </div>
         <div class="form-section">
           <h4>Datos personales</h4>
           <div class="form-grid cols-3">
@@ -764,10 +969,23 @@
         input.addEventListener('input', updateModalPreview);
         input.addEventListener('change', updateModalPreview);
       });
-      form.querySelectorAll('select, input:not([data-stat])').forEach(el => {
+      form.querySelectorAll('select, input:not([data-stat]):not([type=file])').forEach(el => {
         el.addEventListener('input', updateModalPreview);
         el.addEventListener('change', updateModalPreview);
       });
+      const photoInput = document.getElementById('photo-input');
+      if (photoInput) {
+        photoInput.addEventListener('change', e => {
+          const file = e.target.files && e.target.files[0];
+          if (file) handlePhotoSelect(file);
+          e.target.value = '';
+        });
+      }
+    }
+
+    function initPhotoInForm(p) {
+      pendingPhoto = null;
+      updatePhotoPreview(getPlayerPhoto(p));
     }
 
     function openCreateEditor() {
@@ -781,6 +999,7 @@
       document.getElementById('modal-save-status').className = 'save-status';
       document.getElementById('player-form').innerHTML = buildFormHtml(p, true);
       bindFormEvents();
+      initPhotoInForm(p);
       document.getElementById('modal-overlay').classList.add('open');
       document.querySelector('[name=nombre]')?.focus();
     }
@@ -796,6 +1015,7 @@
       document.getElementById('modal-save-status').className = 'save-status';
       document.getElementById('player-form').innerHTML = buildFormHtml(p, false);
       bindFormEvents();
+      initPhotoInForm(p);
       document.getElementById('modal-overlay').classList.add('open');
     }
 
@@ -819,6 +1039,8 @@
       base.altura = Number(form.querySelector('[name=altura]').value) || 175;
       base.pie_habil = form.querySelector('[name=pie_habil]').value;
       base.posicion = form.querySelector('[name=posicion]').value;
+      base.foto_url = String(form.querySelector('[name=foto_url]')?.value || '').trim();
+      if (pendingPhoto) base.foto_url = pendingPhoto.dataUrl;
       STAT_FIELDS.forEach(f => {
         let v = roundStat(Number(form.querySelector(`[name=${f}]`).value));
         base[f] = v;
@@ -840,6 +1062,7 @@
       document.getElementById('modal-overlay').classList.remove('open');
       editingIdx = -1;
       isCreating = false;
+      pendingPhoto = null;
       document.getElementById('btn-save').textContent = 'Guardar cambios';
     }
 
@@ -862,7 +1085,7 @@
 
     async function savePlayer(idx) {
       const statusEl = document.getElementById('modal-save-status');
-      const data = readFormData();
+      let data = readFormData();
 
       if (isCreating) {
         if (!data.nombre) {
@@ -879,57 +1102,77 @@
         return;
       }
 
-      if (!isCreating) {
-        Object.assign(players[idx], data);
-      }
-
-      if (APPS_SCRIPT_URL.includes('TU_ID_AQUI')) {
-        if (isCreating) {
-          players.push(data);
-          editingIdx = players.length - 1;
-          isCreating = false;
-          document.getElementById('btn-save').textContent = 'Guardar cambios';
-        }
-        renderGrid();
-        updateFormatWarning();
-        statusEl.textContent = 'local';
-        statusEl.className = 'save-status saved';
-        updateModalPreview();
-        return;
-      }
-
       statusEl.textContent = 'guardando…';
       statusEl.className = 'save-status saving';
 
+      const isOffline = APPS_SCRIPT_URL.includes('TU_ID_AQUI');
+
       try {
-        await postPlayer(data, isCreating);
+        if (!isOffline && pendingPhoto && !isCreating) {
+          const uploadedUrl = await uploadPhoto(data.nombre);
+          if (uploadedUrl) data.foto_url = uploadedUrl;
+        }
+
+        if (!isOffline && isCreating) {
+          await postPlayer({ ...data, foto_url: pendingPhoto ? '' : data.foto_url }, true);
+          if (pendingPhoto) {
+            const uploadedUrl = await uploadPhoto(data.nombre);
+            if (uploadedUrl) data.foto_url = uploadedUrl;
+          }
+        } else if (!isOffline && !isCreating) {
+          await postPlayer(data, false);
+        }
+
+        if (isOffline) {
+          if (pendingPhoto) {
+            saveLocalPhoto(data.nombre, pendingPhoto.dataUrl);
+            data.foto_url = pendingPhoto.dataUrl;
+          } else if (data.foto_url && data.foto_url.startsWith('data:')) {
+            saveLocalPhoto(data.nombre, data.foto_url);
+          } else if (data.foto_url) {
+            saveLocalPhoto(data.nombre, data.foto_url);
+          }
+        }
+
+        pendingPhoto = null;
+
         if (isCreating) {
           players.push(data);
           editingIdx = players.length - 1;
           isCreating = false;
           document.getElementById('modal-title').textContent = data.nombre;
           document.getElementById('btn-save').textContent = 'Guardar cambios';
+        } else {
+          Object.assign(players[idx], data);
         }
+
         statusEl.textContent = 'guardado';
         statusEl.className = 'save-status saved';
-      } catch {
-        try {
-          await fetch(APPS_SCRIPT_URL, {
-            method: 'POST',
-            mode: 'no-cors',
-            headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-            body: JSON.stringify(isCreating ? { ...data, action: 'create' } : data)
-          });
-          if (isCreating) {
-            players.push(data);
-            editingIdx = players.length - 1;
-            isCreating = false;
-            document.getElementById('modal-title').textContent = data.nombre;
-            document.getElementById('btn-save').textContent = 'Guardar cambios';
+      } catch (err) {
+        if (!isOffline) {
+          try {
+            await fetch(APPS_SCRIPT_URL, {
+              method: 'POST',
+              mode: 'no-cors',
+              headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+              body: JSON.stringify(isCreating ? { ...data, action: 'create' } : data)
+            });
+            if (isCreating) {
+              players.push(data);
+              editingIdx = players.length - 1;
+              isCreating = false;
+              document.getElementById('modal-title').textContent = data.nombre;
+              document.getElementById('btn-save').textContent = 'Guardar cambios';
+            } else {
+              Object.assign(players[idx], data);
+            }
+            statusEl.textContent = 'guardado';
+            statusEl.className = 'save-status saved';
+          } catch {
+            statusEl.textContent = 'error';
+            statusEl.className = 'save-status error';
           }
-          statusEl.textContent = 'guardado';
-          statusEl.className = 'save-status saved';
-        } catch {
+        } else {
           statusEl.textContent = 'error';
           statusEl.className = 'save-status error';
         }
@@ -937,6 +1180,7 @@
 
       renderGrid();
       updateFormatWarning();
+      initPhotoInForm(isCreating ? defaultPlayer('') : players[editingIdx]);
       updateModalPreview();
     }
 

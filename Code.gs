@@ -4,11 +4,11 @@
  * Nombre | Posicion | Edad | Altura | Pie_habil |
  * Vel_fis | Resistencia | Fuerza |
  * Regate | Pase_corto | Pase_largo | Posicionamiento | Remate |
- * Marca |
- * Atajar | Reflejos | Salidas
+ * Marca | Atajar | Reflejos | Salidas | Foto_url
  */
 
 var SHEET_NAME = 'Jugadores';
+var FOTOS_FOLDER_NAME = '3ertiempo-fotos';
 
 var STAT_FIELDS = [
   'vel_fis', 'resistencia', 'fuerza',
@@ -34,7 +34,8 @@ var COL = {
   marca: 13,
   atajar: 14,
   reflejos: 15,
-  salidas: 16
+  salidas: 16,
+  foto_url: 17
 };
 
 function getSheet_() {
@@ -58,7 +59,8 @@ function rowToPlayer_(row) {
     posicion: String(row[COL.posicion] || 'MED').trim(),
     edad: Number(row[COL.edad]) || 30,
     altura: Number(row[COL.altura]) || 175,
-    pie_habil: String(row[COL.pie_habil] || 'Derecho').trim()
+    pie_habil: String(row[COL.pie_habil] || 'Derecho').trim(),
+    foto_url: String(row[COL.foto_url] || '').trim()
   };
 
   for (var i = 0; i < STAT_FIELDS.length; i++) {
@@ -96,6 +98,7 @@ function buildRowValues_(body) {
     rowValues.push(Number(body[STAT_FIELDS[j]]));
   }
 
+  rowValues.push(String(body.foto_url || '').trim());
   return rowValues;
 }
 
@@ -130,6 +133,45 @@ function validateStats_(body) {
   return null;
 }
 
+function getFotosFolder_() {
+  var folders = DriveApp.getFoldersByName(FOTOS_FOLDER_NAME);
+  if (folders.hasNext()) return folders.next();
+  return DriveApp.createFolder(FOTOS_FOLDER_NAME);
+}
+
+function uploadFotoToDrive_(nombre, base64, mimeType) {
+  var folder = getFotosFolder_();
+  var safeName = String(nombre || 'jugador')
+    .replace(/[^a-zA-Z0-9áéíóúñÁÉÍÓÚÑüÜ ]/g, '')
+    .trim()
+    .replace(/\s+/g, '_') || 'jugador';
+  var ext = mimeType === 'image/png' ? 'png' : 'jpg';
+  var fileName = safeName + '.' + ext;
+
+  var existing = folder.getFilesByName(fileName);
+  while (existing.hasNext()) {
+    existing.next().setTrashed(true);
+  }
+
+  var blob = Utilities.newBlob(Utilities.base64Decode(base64), mimeType, fileName);
+  var file = folder.createFile(blob);
+  file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+
+  return 'https://drive.google.com/thumbnail?id=' + file.getId() + '&sz=w400';
+}
+
+function setPlayerFotoUrl_(nombre, fotoUrl) {
+  var sheet = getSheet_();
+  var data = sheet.getDataRange().getValues();
+  var rowIndex = findPlayerRow_(data, nombre);
+
+  if (rowIndex === -1) {
+    throw new Error('Jugador no encontrado: ' + nombre);
+  }
+
+  sheet.getRange(rowIndex, COL.foto_url + 1).setValue(fotoUrl);
+}
+
 function doPost(e) {
   try {
     var body = JSON.parse(e.postData.contents);
@@ -138,6 +180,19 @@ function doPost(e) {
 
     if (!nombre) {
       return jsonResponse_({ ok: false, error: 'Falta el nombre del jugador' });
+    }
+
+    if (action === 'uploadFoto') {
+      if (!body.imageBase64) {
+        return jsonResponse_({ ok: false, error: 'Falta la imagen' });
+      }
+      var fotoUrl = uploadFotoToDrive_(
+        nombre,
+        body.imageBase64,
+        body.mimeType || 'image/jpeg'
+      );
+      setPlayerFotoUrl_(nombre, fotoUrl);
+      return jsonResponse_({ ok: true, nombre: nombre, foto_url: fotoUrl });
     }
 
     var statError = validateStats_(body);
@@ -182,5 +237,6 @@ function jsonResponse_(obj) {
  * 1. Importar jugadores.csv en Google Sheets (pestaña "Jugadores").
  * 2. Extensiones → Apps Script → pegar este código.
  * 3. Implementar → Nueva implementación → Aplicación web → Cualquiera.
+ *    (Autorizá acceso a Sheets y Drive para las fotos.)
  * 4. Copiar URL /exec en APPS_SCRIPT_URL de index.html.
  */
