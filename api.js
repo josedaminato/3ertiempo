@@ -23,7 +23,9 @@ const PlayerApi = (() => {
   function defaultPlayer(nombre) {
     const p = {
       nombre,
-      posicion: 'MED',
+      posicion_1: 'MED',
+      posicion_2: 'DEL',
+      juega_arco: true,
       edad: 30,
       altura: 175,
       pie_habil: 'Derecho',

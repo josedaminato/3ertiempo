@@ -180,6 +180,38 @@
       opacity: 0.85;
     }
 
+    .fifa-pos-wrap {
+      display: flex;
+      flex-direction: column;
+      gap: 0.05rem;
+      margin-top: 0.1rem;
+    }
+
+    .fifa-pos-main { font-size: 0.62rem; font-weight: 800; line-height: 1; }
+    .fifa-pos-sub { font-size: 0.52rem; font-weight: 700; opacity: 0.8; line-height: 1; }
+
+    .fifa-pos-arq {
+      font-size: 0.48rem;
+      font-weight: 800;
+      letter-spacing: 0.04em;
+      background: rgba(26, 39, 68, 0.2);
+      padding: 0.08rem 0.22rem;
+      border-radius: 3px;
+      align-self: flex-start;
+      margin-top: 0.08rem;
+    }
+
+    .field-check {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-size: 0.85rem;
+      cursor: pointer;
+      margin-top: 0.35rem;
+    }
+
+    .field-check input { width: auto; accent-color: var(--accent); }
+
     .fifa-name {
       font-family: 'Arial Narrow', 'Franklin Gothic Medium Condensed', sans-serif;
       font-stretch: condensed;
@@ -592,7 +624,7 @@
       velocidad: 1, tiro: 1, pase: 1, regate: 1, defensa: 1, fisico: 1, portero: 0.6
     };
 
-    const POSICIONES = ['ARQ', 'DEF', 'MED', 'DEL', 'LIB'];
+    const POSICIONES_CAMPO = ['DEF', 'MED', 'DEL', 'LIB'];
     const PIES = ['Derecho', 'Izquierdo', 'Ambidiestro'];
 
     const ITERATIONS = 600;
@@ -617,7 +649,9 @@
     function defaultPlayer(nombre) {
       const p = {
         nombre,
-        posicion: 'MED',
+        posicion_1: 'MED',
+        posicion_2: 'DEL',
+        juega_arco: true,
         edad: 30,
         altura: 175,
         pie_habil: 'Derecho',
@@ -734,6 +768,23 @@
       return 'tier-bronze';
     }
 
+    function formatPosiciones(p) {
+      const parts = [p.posicion_1, p.posicion_2].filter(Boolean);
+      if (p.juega_arco) parts.push('ARQ');
+      return parts.join(' · ');
+    }
+
+    function posicionesCardHtml(p) {
+      const arq = p.juega_arco
+        ? '<span class="fifa-pos-arq">ARQ</span>'
+        : '';
+      return `<div class="fifa-pos-wrap">
+        <span class="fifa-pos-main">${p.posicion_1 || 'MED'}</span>
+        <span class="fifa-pos-sub">${p.posicion_2 || 'DEL'}</span>
+        ${arq}
+      </div>`;
+    }
+
     function buildFifaCardHtml(p, clickable) {
       const c = computeCard(p);
       const cls = tierClass(c.media);
@@ -747,7 +798,7 @@
           <div class="fifa-card-body">
             <div class="fifa-card-top">
               <div class="fifa-ovr">${c.media}</div>
-              <div class="fifa-pos">${p.posicion || 'MED'}</div>
+              ${posicionesCardHtml(p)}
             </div>
             <div class="fifa-name">${p.nombre}</div>
             <div class="fifa-stats">
@@ -820,7 +871,14 @@
 
     function normalizePlayer(p) {
       const out = defaultPlayer(p.nombre || 'Jugador');
-      out.posicion = p.posicion || out.posicion;
+      if (p.posicion && !p.posicion_1) {
+        out.posicion_1 = p.posicion;
+        out.posicion_2 = p.posicion_2 || (p.posicion === 'MED' ? 'DEL' : 'MED');
+      } else {
+        out.posicion_1 = p.posicion_1 || out.posicion_1;
+        out.posicion_2 = p.posicion_2 || out.posicion_2;
+      }
+      out.juega_arco = p.juega_arco !== false && p.juega_arco !== 0 && p.juega_arco !== '0';
       out.edad = Number(p.edad) || out.edad;
       out.altura = Number(p.altura) || out.altura;
       out.pie_habil = p.pie_habil || out.pie_habil;
@@ -887,10 +945,23 @@
           </div>
         </div>
         <div class="form-section">
-          <h4>Posición</h4>
-          <div class="field">
-            <select name="posicion">${POSICIONES.map(x => `<option ${p.posicion === x ? 'selected' : ''}>${x}</option>`).join('')}</select>
+          <h4>Posiciones</h4>
+          <div class="form-grid">
+            <div class="field">
+              <label>Puesto 1</label>
+              <select name="posicion_1">${POSICIONES_CAMPO.map(x =>
+                `<option ${p.posicion_1 === x ? 'selected' : ''}>${x}</option>`).join('')}</select>
+            </div>
+            <div class="field">
+              <label>Puesto 2</label>
+              <select name="posicion_2">${POSICIONES_CAMPO.map(x =>
+                `<option ${p.posicion_2 === x ? 'selected' : ''}>${x}</option>`).join('')}</select>
+            </div>
           </div>
+          <label class="field-check">
+            <input type="checkbox" name="juega_arco" ${p.juega_arco !== false ? 'checked' : ''}>
+            También juega de arquero (rotación en el arco)
+          </label>
         </div>
         <div class="form-section">
           <h4>Físico</h4>
@@ -936,7 +1007,6 @@
         el.addEventListener('input', updateModalPreview);
         el.addEventListener('change', updateModalPreview);
       });
-      const photoInput = document.getElementById('photo-input');
       if (photoInput) {
         photoInput.addEventListener('change', e => {
           const file = e.target.files && e.target.files[0];
@@ -1001,7 +1071,9 @@
       base.edad = Number(form.querySelector('[name=edad]').value) || 30;
       base.altura = Number(form.querySelector('[name=altura]').value) || 175;
       base.pie_habil = form.querySelector('[name=pie_habil]').value;
-      base.posicion = form.querySelector('[name=posicion]').value;
+      base.posicion_1 = form.querySelector('[name=posicion_1]').value;
+      base.posicion_2 = form.querySelector('[name=posicion_2]').value;
+      base.juega_arco = form.querySelector('[name=juega_arco]').checked;
       base.foto_url = String(form.querySelector('[name=foto_url]')?.value || '').trim();
       if (pendingPhoto) base.foto_url = pendingPhoto.dataUrl;
       STAT_FIELDS.forEach(f => {
@@ -1170,7 +1242,7 @@
     function fillTeamList(id, team) {
       document.getElementById(id).innerHTML = team.map(p => {
         const c = computeCard(p);
-        return `<li><span>${p.nombre} <small class="team-ovr">${p.posicion}</small></span><span class="team-ovr">${c.media}</span></li>`;
+        return `<li><span>${p.nombre} <small class="team-ovr">${formatPosiciones(p)}</small></span><span class="team-ovr">${c.media}</span></li>`;
       }).join('');
     }
 

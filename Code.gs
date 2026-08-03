@@ -1,10 +1,13 @@
 /**
  * 3er tiempo — Backend Google Apps Script
  * Columnas (fila 1):
- * Nombre | Posicion | Edad | Altura | Pie_habil |
+ * Nombre | Posicion_1 | Posicion_2 | Juega_arco |
+ * Edad | Altura | Pie_habil |
  * Vel_fis | Resistencia | Fuerza |
  * Regate | Pase_corto | Pase_largo | Posicionamiento | Remate |
  * Marca | Atajar | Reflejos | Salidas | Foto_url
+ *
+ * Juega_arco: 1 = sí, 0 = no (todos rotan, por defecto 1)
  */
 
 var SHEET_NAME = 'Jugadores';
@@ -17,7 +20,30 @@ var STAT_FIELDS = [
   'atajar', 'reflejos', 'salidas'
 ];
 
-var COL = {
+var COL_NEW = {
+  nombre: 0,
+  posicion_1: 1,
+  posicion_2: 2,
+  juega_arco: 3,
+  edad: 4,
+  altura: 5,
+  pie_habil: 6,
+  vel_fis: 7,
+  resistencia: 8,
+  fuerza: 9,
+  regate: 10,
+  pase_corto: 11,
+  pase_largo: 12,
+  posicionamiento: 13,
+  remate: 14,
+  marca: 15,
+  atajar: 16,
+  reflejos: 17,
+  salidas: 18,
+  foto_url: 19
+};
+
+var COL_LEGACY = {
   nombre: 0,
   posicion: 1,
   edad: 2,
@@ -43,20 +69,41 @@ function getSheet_() {
   return ss.getSheetByName(SHEET_NAME) || ss.getSheets()[0];
 }
 
-function readStat_(row, key) {
-  var val = Number(row[COL[key]]);
+function isLegacyFormat_(headers) {
+  var h = headers.map(function(x) { return String(x).toLowerCase().trim(); });
+  return h.indexOf('posicion_1') < 0;
+}
+
+function readStat_(row, col, key) {
+  var val = Number(row[col[key]]);
   if (isNaN(val) || val < 1) return 1;
   if (val > 5) return 5;
   return Math.round(val);
 }
 
-function rowToPlayer_(row) {
+function readBoolArco_(val) {
+  if (val === true || val === 1 || val === '1') return true;
+  var s = String(val || '').toLowerCase().trim();
+  return s === 'si' || s === 'sí' || s === 'true' || s === 'x';
+}
+
+function rowToPlayer_(row, legacy) {
+  var COL = legacy ? COL_LEGACY : COL_NEW;
   var nombre = String(row[COL.nombre] || '').trim();
   if (!nombre) return null;
 
+  var pos1 = legacy
+    ? String(row[COL.posicion] || 'MED').trim()
+    : String(row[COL.posicion_1] || 'MED').trim();
+  var pos2 = legacy
+    ? pos1
+    : String(row[COL.posicion_2] || 'DEL').trim();
+
   var player = {
     nombre: nombre,
-    posicion: String(row[COL.posicion] || 'MED').trim(),
+    posicion_1: pos1,
+    posicion_2: pos2,
+    juega_arco: legacy ? true : readBoolArco_(row[COL.juega_arco] !== false ? row[COL.juega_arco] : 1),
     edad: Number(row[COL.edad]) || 30,
     altura: Number(row[COL.altura]) || 175,
     pie_habil: String(row[COL.pie_habil] || 'Derecho').trim(),
@@ -64,7 +111,7 @@ function rowToPlayer_(row) {
   };
 
   for (var i = 0; i < STAT_FIELDS.length; i++) {
-    player[STAT_FIELDS[i]] = readStat_(row, STAT_FIELDS[i]);
+    player[STAT_FIELDS[i]] = readStat_(row, COL, STAT_FIELDS[i]);
   }
 
   return player;
@@ -73,10 +120,11 @@ function rowToPlayer_(row) {
 function doGet(e) {
   var sheet = getSheet_();
   var data = sheet.getDataRange().getValues();
+  var legacy = isLegacyFormat_(data[0] || []);
   var players = [];
 
   for (var i = 1; i < data.length; i++) {
-    var player = rowToPlayer_(data[i]);
+    var player = rowToPlayer_(data[i], legacy);
     if (player) players.push(player);
   }
 
@@ -88,7 +136,9 @@ function doGet(e) {
 function buildRowValues_(body) {
   var rowValues = [
     String(body.nombre || '').trim(),
-    String(body.posicion || 'MED').trim(),
+    String(body.posicion_1 || 'MED').trim(),
+    String(body.posicion_2 || 'DEL').trim(),
+    body.juega_arco ? 1 : 0,
     Number(body.edad) || 30,
     Number(body.altura) || 175,
     String(body.pie_habil || 'Derecho').trim()
@@ -104,7 +154,7 @@ function buildRowValues_(body) {
 
 function findPlayerRow_(data, nombre) {
   for (var r = 1; r < data.length; r++) {
-    if (String(data[r][COL.nombre] || '').trim() === nombre) {
+    if (String(data[r][0] || '').trim() === nombre) {
       return r + 1;
     }
   }
@@ -115,7 +165,7 @@ function nameExists_(data, nombre, ignoreRowIndex) {
   var target = nombre.trim().toLowerCase();
   for (var r = 1; r < data.length; r++) {
     if (ignoreRowIndex && r + 1 === ignoreRowIndex) continue;
-    if (String(data[r][COL.nombre] || '').trim().toLowerCase() === target) {
+    if (String(data[r][0] || '').trim().toLowerCase() === target) {
       return true;
     }
   }
@@ -160,16 +210,19 @@ function uploadFotoToDrive_(nombre, base64, mimeType) {
   return 'https://drive.google.com/thumbnail?id=' + file.getId() + '&sz=w400';
 }
 
-function setPlayerFotoUrl_(nombre, fotoUrl) {
+function setPlayerFotoUrl_(nombre, fotoUrl, legacy) {
   var sheet = getSheet_();
   var data = sheet.getDataRange().getValues();
   var rowIndex = findPlayerRow_(data, nombre);
+  var col = (legacy !== undefined ? legacy : isLegacyFormat_(data[0] || []))
+    ? COL_LEGACY.foto_url + 1
+    : COL_NEW.foto_url + 1;
 
   if (rowIndex === -1) {
     throw new Error('Jugador no encontrado: ' + nombre);
   }
 
-  sheet.getRange(rowIndex, COL.foto_url + 1).setValue(fotoUrl);
+  sheet.getRange(rowIndex, col).setValue(fotoUrl);
 }
 
 function doPost(e) {
@@ -182,6 +235,10 @@ function doPost(e) {
       return jsonResponse_({ ok: false, error: 'Falta el nombre del jugador' });
     }
 
+    var sheet = getSheet_();
+    var data = sheet.getDataRange().getValues();
+    var legacy = isLegacyFormat_(data[0] || []);
+
     if (action === 'uploadFoto') {
       if (!body.imageBase64) {
         return jsonResponse_({ ok: false, error: 'Falta la imagen' });
@@ -191,7 +248,7 @@ function doPost(e) {
         body.imageBase64,
         body.mimeType || 'image/jpeg'
       );
-      setPlayerFotoUrl_(nombre, fotoUrl);
+      setPlayerFotoUrl_(nombre, fotoUrl, legacy);
       return jsonResponse_({ ok: true, nombre: nombre, foto_url: fotoUrl });
     }
 
@@ -199,9 +256,6 @@ function doPost(e) {
     if (statError) {
       return jsonResponse_({ ok: false, error: statError });
     }
-
-    var sheet = getSheet_();
-    var data = sheet.getDataRange().getValues();
 
     if (action === 'create') {
       if (nameExists_(data, nombre, null)) {
@@ -230,13 +284,3 @@ function jsonResponse_(obj) {
     .createTextOutput(JSON.stringify(obj))
     .setMimeType(ContentService.MimeType.JSON);
 }
-
-/*
- * INSTRUCCIONES DE DESPLIEGUE
- *
- * 1. Importar jugadores.csv en Google Sheets (pestaña "Jugadores").
- * 2. Extensiones → Apps Script → pegar este código.
- * 3. Implementar → Nueva implementación → Aplicación web → Cualquiera.
- *    (Autorizá acceso a Sheets y Drive para las fotos.)
- * 4. Copiar URL /exec en APPS_SCRIPT_URL de index.html.
- */
