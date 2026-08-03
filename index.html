@@ -580,16 +580,9 @@
     </div>
   </div>
 
+  <script src="config.js"></script>
+  <script src="api.js"></script>
   <script>
-    const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/TU_ID_AQUI/exec';
-
-    const STAT_FIELDS = [
-      'vel_fis', 'resistencia', 'fuerza',
-      'regate', 'pase_corto', 'pase_largo', 'posicionamiento', 'remate',
-      'marca',
-      'atajar', 'reflejos', 'salidas'
-    ];
-
     const CARD_ATTRS = ['velocidad', 'tiro', 'pase', 'regate', 'defensa', 'fisico'];
     const CARD_LABELS = ['RIT', 'TIR', 'PAS', 'REG', 'DEF', 'FÍS'];
     const CARD_LABELS_FULL = ['Velocidad', 'Tiro', 'Pase', 'Regate', 'Defensa', 'Físico'];
@@ -598,13 +591,6 @@
     const BALANCE_WEIGHTS = {
       velocidad: 1, tiro: 1, pase: 1, regate: 1, defensa: 1, fisico: 1, portero: 0.6
     };
-
-    const DEFAULT_NAMES = [
-      'Marcelo', 'Maxi', 'Turco', 'Gato', 'Mariano', 'Charly', 'Gonza', 'Ariel',
-      'Claudio', 'Cacho', 'Jorge', 'Jose', 'Claudio M', 'Seba', 'Marcos',
-      'Juampi', 'Chifi', 'Matías',
-      'Pablo', 'Fer', 'Tasla', 'Franco', 'Javi'
-    ];
 
     const POSICIONES = ['ARQ', 'DEF', 'MED', 'DEL', 'LIB'];
     const PIES = ['Derecho', 'Izquierdo', 'Ambidiestro'];
@@ -618,7 +604,6 @@
     let editingIdx = -1;
     let isCreating = false;
     let pendingPhoto = null;
-    const FOTO_STORAGE_KEY = '3ertiempo_fotos';
 
     function avg(...vals) {
       const v = vals.filter(n => !isNaN(n));
@@ -643,7 +628,7 @@
     }
 
     function loadLocalPhotos() {
-      try { return JSON.parse(localStorage.getItem(FOTO_STORAGE_KEY) || '{}'); }
+      try { return JSON.parse(localStorage.getItem(STORAGE_KEYS.fotos) || '{}'); }
       catch { return {}; }
     }
 
@@ -651,7 +636,7 @@
       const all = loadLocalPhotos();
       if (dataUrl) all[nombre] = dataUrl;
       else delete all[nombre];
-      localStorage.setItem(FOTO_STORAGE_KEY, JSON.stringify(all));
+      localStorage.setItem(STORAGE_KEYS.fotos, JSON.stringify(all));
     }
 
     function getPlayerPhoto(p) {
@@ -728,25 +713,6 @@
       } catch {
         alert('No se pudo cargar la imagen.');
       }
-    }
-
-    async function uploadPhoto(nombre) {
-      if (!pendingPhoto) return null;
-      const res = await fetch(APPS_SCRIPT_URL, {
-        method: 'POST',
-        redirect: 'follow',
-        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify({
-          action: 'uploadFoto',
-          nombre,
-          imageBase64: pendingPhoto.base64,
-          mimeType: pendingPhoto.mimeType
-        })
-      });
-      const result = await res.json();
-      if (!result.ok) throw new Error(result.error || 'Error al subir foto');
-      pendingPhoto = null;
-      return result.foto_url;
     }
 
     function computeCard(p) {
@@ -836,18 +802,15 @@
       status.classList.remove('error');
 
       try {
-        if (APPS_SCRIPT_URL.includes('TU_ID_AQUI')) throw new Error('offline');
-        const res = await fetch(APPS_SCRIPT_URL);
-        const data = await res.json();
-        if (!data.ok || !Array.isArray(data.players)) throw new Error('invalid');
-        players = data.players.map(normalizePlayer);
-        status.textContent = `${players.length} jugadores cargados desde la planilla.`;
-      } catch {
-        players = DEFAULT_NAMES.map(defaultPlayer);
+        const result = await PlayerApi.listPlayers();
+        players = result.players.map(normalizePlayer);
         applyLocalPhotos();
-        status.textContent = APPS_SCRIPT_URL.includes('TU_ID_AQUI')
-          ? 'Modo local: configurá APPS_SCRIPT_URL para sincronizar.'
-          : 'Sin conexión. Datos locales.';
+        status.textContent = result.message;
+        if (result.offline) status.classList.add('error');
+      } catch {
+        players = APP_CONFIG.defaultPlayerNames.map(defaultPlayer);
+        applyLocalPhotos();
+        status.textContent = 'Sin conexión. Datos locales.';
         status.classList.add('error');
       }
 
@@ -1071,18 +1034,6 @@
       return players.some((p, i) => i !== excludeIdx && p.nombre.trim().toLowerCase() === n);
     }
 
-    async function postPlayer(data, create) {
-      const payload = create ? { ...data, action: 'create' } : data;
-      const res = await fetch(APPS_SCRIPT_URL, {
-        method: 'POST',
-        redirect: 'follow',
-        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify(payload)
-      });
-      const result = await res.json();
-      if (!result.ok) throw new Error(result.error || 'Error al guardar');
-    }
-
     async function savePlayer(idx) {
       const statusEl = document.getElementById('modal-save-status');
       let data = readFormData();
@@ -1105,36 +1056,14 @@
       statusEl.textContent = 'guardando…';
       statusEl.className = 'save-status saving';
 
-      const isOffline = APPS_SCRIPT_URL.includes('TU_ID_AQUI');
-
       try {
-        if (!isOffline && pendingPhoto && !isCreating) {
-          const uploadedUrl = await uploadPhoto(data.nombre);
-          if (uploadedUrl) data.foto_url = uploadedUrl;
+        if (pendingPhoto) {
+          const fotoUrl = await PlayerApi.uploadPhoto(data.nombre, pendingPhoto);
+          if (fotoUrl) data.foto_url = fotoUrl;
+          pendingPhoto = null;
         }
 
-        if (!isOffline && isCreating) {
-          await postPlayer({ ...data, foto_url: pendingPhoto ? '' : data.foto_url }, true);
-          if (pendingPhoto) {
-            const uploadedUrl = await uploadPhoto(data.nombre);
-            if (uploadedUrl) data.foto_url = uploadedUrl;
-          }
-        } else if (!isOffline && !isCreating) {
-          await postPlayer(data, false);
-        }
-
-        if (isOffline) {
-          if (pendingPhoto) {
-            saveLocalPhoto(data.nombre, pendingPhoto.dataUrl);
-            data.foto_url = pendingPhoto.dataUrl;
-          } else if (data.foto_url && data.foto_url.startsWith('data:')) {
-            saveLocalPhoto(data.nombre, data.foto_url);
-          } else if (data.foto_url) {
-            saveLocalPhoto(data.nombre, data.foto_url);
-          }
-        }
-
-        pendingPhoto = null;
+        await PlayerApi.savePlayer(data, { create: isCreating });
 
         if (isCreating) {
           players.push(data);
@@ -1146,41 +1075,20 @@
           Object.assign(players[idx], data);
         }
 
+        if (PlayerApi.isLocal() && data.foto_url) {
+          saveLocalPhoto(data.nombre, data.foto_url);
+        }
+
         statusEl.textContent = 'guardado';
         statusEl.className = 'save-status saved';
-      } catch (err) {
-        if (!isOffline) {
-          try {
-            await fetch(APPS_SCRIPT_URL, {
-              method: 'POST',
-              mode: 'no-cors',
-              headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-              body: JSON.stringify(isCreating ? { ...data, action: 'create' } : data)
-            });
-            if (isCreating) {
-              players.push(data);
-              editingIdx = players.length - 1;
-              isCreating = false;
-              document.getElementById('modal-title').textContent = data.nombre;
-              document.getElementById('btn-save').textContent = 'Guardar cambios';
-            } else {
-              Object.assign(players[idx], data);
-            }
-            statusEl.textContent = 'guardado';
-            statusEl.className = 'save-status saved';
-          } catch {
-            statusEl.textContent = 'error';
-            statusEl.className = 'save-status error';
-          }
-        } else {
-          statusEl.textContent = 'error';
-          statusEl.className = 'save-status error';
-        }
+      } catch {
+        statusEl.textContent = 'error';
+        statusEl.className = 'save-status error';
       }
 
       renderGrid();
       updateFormatWarning();
-      initPhotoInForm(isCreating ? defaultPlayer('') : players[editingIdx]);
+      if (editingIdx >= 0) initPhotoInForm(players[editingIdx]);
       updateModalPreview();
     }
 
