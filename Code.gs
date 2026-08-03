@@ -5,7 +5,7 @@
  * Edad | Altura | Pie_habil |
  * Vel_fis | Resistencia | Fuerza |
  * Regate | Pase_corto | Pase_largo | Posicionamiento | Remate |
- * Marca | Atajar | Reflejos | Salidas | Foto_url
+ * Marca | Arquero | Foto_url
  *
  * Juega_arco: 1 = sí, 0 = no (todos rotan, por defecto 1)
  */
@@ -16,8 +16,15 @@ var FOTOS_FOLDER_NAME = '3ertiempo-fotos';
 var STAT_FIELDS = [
   'vel_fis', 'resistencia', 'fuerza',
   'regate', 'pase_corto', 'pase_largo', 'posicionamiento', 'remate',
-  'marca',
-  'atajar', 'reflejos', 'salidas'
+  'marca', 'arquero'
+];
+
+var CURRENT_HEADERS = [
+  'Nombre', 'Posicion_1', 'Posicion_2', 'Juega_arco',
+  'Edad', 'Altura', 'Pie_habil',
+  'Vel_fis', 'Resistencia', 'Fuerza',
+  'Regate', 'Pase_corto', 'Pase_largo', 'Posicionamiento', 'Remate',
+  'Marca', 'Arquero', 'Foto_url'
 ];
 
 var COL_NEW = {
@@ -37,10 +44,8 @@ var COL_NEW = {
   posicionamiento: 13,
   remate: 14,
   marca: 15,
-  atajar: 16,
-  reflejos: 17,
-  salidas: 18,
-  foto_url: 19
+  arquero: 16,
+  foto_url: 17
 };
 
 var COL_LEGACY = {
@@ -74,6 +79,11 @@ function isLegacyFormat_(headers) {
   return h.indexOf('posicion_1') < 0;
 }
 
+function hasOldGoalkeeperFields_(headers) {
+  var h = headers.map(function(x) { return String(x).toLowerCase().trim(); });
+  return h.indexOf('atajar') >= 0;
+}
+
 function readStat_(row, col, key) {
   var val = Number(row[col[key]]);
   if (isNaN(val) || val < 1) return 1;
@@ -87,7 +97,7 @@ function readBoolArco_(val) {
   return s === 'si' || s === 'sí' || s === 'true' || s === 'x';
 }
 
-function rowToPlayer_(row, legacy) {
+function rowToPlayer_(row, legacy, oldGoalkeeperFields) {
   var COL = legacy ? COL_LEGACY : COL_NEW;
   var nombre = String(row[COL.nombre] || '').trim();
   if (!nombre) return null;
@@ -107,12 +117,22 @@ function rowToPlayer_(row, legacy) {
     edad: Number(row[COL.edad]) || 30,
     altura: Number(row[COL.altura]) || 175,
     pie_habil: String(row[COL.pie_habil] || 'Derecho').trim(),
-    foto_url: String(row[COL.foto_url] || '').trim()
+    foto_url: String(row[legacy ? COL_LEGACY.foto_url : (oldGoalkeeperFields ? 19 : COL_NEW.foto_url)] || '').trim()
   };
 
   for (var i = 0; i < STAT_FIELDS.length; i++) {
-    player[STAT_FIELDS[i]] = readStat_(row, COL, STAT_FIELDS[i]);
+    if (STAT_FIELDS[i] !== 'arquero') {
+      player[STAT_FIELDS[i]] = readStat_(row, COL, STAT_FIELDS[i]);
+    }
   }
+
+  player.arquero = oldGoalkeeperFields
+    ? Math.round((
+        Number(row[legacy ? COL_LEGACY.atajar : 16]) +
+        Number(row[legacy ? COL_LEGACY.reflejos : 17]) +
+        Number(row[legacy ? COL_LEGACY.salidas : 18])
+      ) / 3) || 3
+    : readStat_(row, COL, 'arquero');
 
   return player;
 }
@@ -121,10 +141,11 @@ function doGet(e) {
   var sheet = getSheet_();
   var data = sheet.getDataRange().getValues();
   var legacy = isLegacyFormat_(data[0] || []);
+  var oldGoalkeeperFields = hasOldGoalkeeperFields_(data[0] || []);
   var players = [];
 
   for (var i = 1; i < data.length; i++) {
-    var player = rowToPlayer_(data[i], legacy);
+    var player = rowToPlayer_(data[i], legacy, oldGoalkeeperFields);
     if (player) players.push(player);
   }
 
@@ -150,6 +171,31 @@ function buildRowValues_(body) {
 
   rowValues.push(String(body.foto_url || '').trim());
   return rowValues;
+}
+
+function migrateSchemaIfNeeded_(sheet, data) {
+  var headers = data[0] || [];
+  var normalized = headers.map(function(x) { return String(x).toLowerCase().trim(); });
+  if (normalized.indexOf('posicion_1') >= 0 && normalized.indexOf('arquero') >= 0) {
+    return data;
+  }
+
+  var legacy = isLegacyFormat_(headers);
+  var oldGoalkeeperFields = hasOldGoalkeeperFields_(headers);
+  var migratedRows = [];
+
+  for (var i = 1; i < data.length; i++) {
+    var player = rowToPlayer_(data[i], legacy, oldGoalkeeperFields);
+    if (player) migratedRows.push(buildRowValues_(player));
+  }
+
+  sheet.clearContents();
+  sheet.getRange(1, 1, 1, CURRENT_HEADERS.length).setValues([CURRENT_HEADERS]);
+  if (migratedRows.length) {
+    sheet.getRange(2, 1, migratedRows.length, CURRENT_HEADERS.length).setValues(migratedRows);
+  }
+
+  return [CURRENT_HEADERS].concat(migratedRows);
 }
 
 function findPlayerRow_(data, nombre) {
@@ -210,19 +256,16 @@ function uploadFotoToDrive_(nombre, base64, mimeType) {
   return 'https://drive.google.com/thumbnail?id=' + file.getId() + '&sz=w400';
 }
 
-function setPlayerFotoUrl_(nombre, fotoUrl, legacy) {
+function setPlayerFotoUrl_(nombre, fotoUrl) {
   var sheet = getSheet_();
   var data = sheet.getDataRange().getValues();
   var rowIndex = findPlayerRow_(data, nombre);
-  var col = (legacy !== undefined ? legacy : isLegacyFormat_(data[0] || []))
-    ? COL_LEGACY.foto_url + 1
-    : COL_NEW.foto_url + 1;
 
   if (rowIndex === -1) {
     throw new Error('Jugador no encontrado: ' + nombre);
   }
 
-  sheet.getRange(rowIndex, col).setValue(fotoUrl);
+  sheet.getRange(rowIndex, COL_NEW.foto_url + 1).setValue(fotoUrl);
 }
 
 function doPost(e) {
@@ -237,7 +280,7 @@ function doPost(e) {
 
     var sheet = getSheet_();
     var data = sheet.getDataRange().getValues();
-    var legacy = isLegacyFormat_(data[0] || []);
+    data = migrateSchemaIfNeeded_(sheet, data);
 
     if (action === 'uploadFoto') {
       if (!body.imageBase64) {
@@ -248,7 +291,7 @@ function doPost(e) {
         body.imageBase64,
         body.mimeType || 'image/jpeg'
       );
-      setPlayerFotoUrl_(nombre, fotoUrl, legacy);
+      setPlayerFotoUrl_(nombre, fotoUrl);
       return jsonResponse_({ ok: true, nombre: nombre, foto_url: fotoUrl });
     }
 

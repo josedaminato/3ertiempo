@@ -42,9 +42,104 @@
       line-height: 1.5;
     }
 
-    .container { max-width: 960px; margin: 0 auto; padding: 1rem 1rem 3rem; }
+    .container { max-width: 1120px; margin: 0 auto; padding: 1rem 1rem 3rem; }
 
     header { text-align: center; padding: 1.5rem 0 1rem; }
+
+    .session-bar {
+      display: none;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.75rem;
+      padding: 0.65rem 0.8rem;
+      margin-bottom: 0.75rem;
+      border: 1px solid var(--line-white);
+      border-radius: 10px;
+      background: rgba(0, 0, 0, 0.28);
+      font-size: 0.82rem;
+    }
+
+    .session-bar.visible { display: flex; }
+    .session-user strong { color: var(--accent); }
+
+    .btn-ghost {
+      border: 1px solid var(--line-white);
+      border-radius: 7px;
+      background: transparent;
+      color: var(--text-muted);
+      padding: 0.38rem 0.65rem;
+      cursor: pointer;
+    }
+
+    .login-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 1000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 1rem;
+      background:
+        radial-gradient(circle at 50% 15%, rgba(45, 107, 79, 0.95), rgba(10, 28, 21, 0.98)),
+        var(--grass-dark);
+    }
+
+    .login-overlay.hidden { display: none; }
+
+    .login-card {
+      width: min(100%, 420px);
+      padding: 1.6rem;
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      border-radius: 18px;
+      background: rgba(8, 24, 17, 0.84);
+      box-shadow: 0 24px 70px rgba(0, 0, 0, 0.5);
+      text-align: center;
+    }
+
+    .login-ball { font-size: 2.5rem; margin-bottom: 0.3rem; }
+    .login-card h2 {
+      font-family: Impact, 'Arial Narrow', sans-serif;
+      font-size: 2rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      text-shadow: 2px 2px 0 var(--accent);
+    }
+
+    .login-copy {
+      margin: 0.4rem 0 1.2rem;
+      color: var(--text-muted);
+      font-size: 0.85rem;
+    }
+
+    .login-form { display: grid; gap: 0.75rem; text-align: left; }
+    .login-form label { font-size: 0.72rem; text-transform: uppercase; color: var(--text-muted); }
+    .login-form select,
+    .login-form input {
+      width: 100%;
+      margin-top: 0.22rem;
+      padding: 0.75rem;
+      border: 1px solid var(--line-white);
+      border-radius: 9px;
+      background: var(--input-bg);
+      color: var(--text);
+      font-size: 1rem;
+    }
+
+    .login-submit {
+      padding: 0.8rem;
+      border: 0;
+      border-radius: 9px;
+      background: var(--accent);
+      color: white;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      cursor: pointer;
+    }
+
+    .login-message { min-height: 1.2rem; color: var(--text-muted); font-size: 0.78rem; }
+    .login-message.error { color: var(--error); }
+    .prototype-note { margin-top: 0.8rem; color: var(--warning); font-size: 0.68rem; }
 
     h1 {
       font-family: 'Arial Narrow', 'Franklin Gothic Medium Condensed', 'Impact', sans-serif;
@@ -115,44 +210,86 @@
     /* Grid de cartas FIFA */
     .players-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
-      gap: 0.75rem;
+      grid-template-columns: repeat(auto-fill, minmax(175px, 1fr));
+      gap: 1rem;
     }
 
     .fifa-card {
       position: relative;
-      aspect-ratio: 2 / 2.85;
-      border-radius: 10px;
-      padding: 0.55rem 0.5rem 0.45rem;
+      aspect-ratio: 0.72;
+      max-width: 230px;
+      width: 100%;
+      justify-self: center;
+      padding: 0.8rem 0.75rem 0.7rem;
       cursor: pointer;
-      border: 2px solid rgba(0,0,0,0.3);
-      box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+      border: 1px solid rgba(255, 255, 255, 0.28);
+      border-radius: 16px;
+      box-shadow:
+        0 2px 2px rgba(255, 255, 255, 0.18) inset,
+        0 -5px 12px rgba(45, 27, 0, 0.18) inset,
+        0 4px 0 rgba(20, 12, 2, 0.28),
+        0 12px 22px rgba(0, 0, 0, 0.46),
+        0 24px 42px rgba(0, 0, 0, 0.24);
       transition: transform 0.15s, box-shadow 0.15s;
       color: #1a1208;
       overflow: hidden;
       isolation: isolate;
     }
 
+    .fifa-card::before {
+      content: '';
+      position: absolute;
+      inset: 5px;
+      z-index: -1;
+      border: 2px solid rgba(72, 48, 3, 0.32);
+      border-radius: 11px;
+      pointer-events: none;
+    }
+
+    .fifa-card::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      z-index: -2;
+      background:
+        radial-gradient(circle at 50% 38%, rgba(255,255,255,0.48), transparent 28%),
+        repeating-linear-gradient(125deg, transparent 0 18px, rgba(255,255,255,0.08) 19px 20px);
+      pointer-events: none;
+    }
+
     .fifa-card-photo {
       position: absolute;
-      right: -4%;
-      top: 8%;
-      width: 52%;
-      height: 58%;
+      left: 25%;
+      top: 13%;
+      width: 70%;
+      height: 48%;
       object-fit: cover;
       object-position: center top;
-      opacity: 0.92;
+      opacity: 0.98;
       z-index: 0;
-      -webkit-mask-image: linear-gradient(to left, #000 55%, transparent 100%);
-      mask-image: linear-gradient(to left, #000 55%, transparent 100%);
+      filter: contrast(1.04) saturate(0.92);
+      -webkit-mask-image: linear-gradient(to bottom, #000 68%, transparent 100%);
+      mask-image: linear-gradient(to bottom, #000 68%, transparent 100%);
     }
 
     .fifa-card-body {
       position: relative;
       z-index: 1;
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      padding-bottom: 0.65rem;
     }
 
-    .fifa-card:hover { transform: translateY(-3px); box-shadow: 0 8px 20px rgba(0,0,0,0.5); }
+    .fifa-card:hover {
+      transform: translateY(-5px) rotateX(1deg);
+      box-shadow:
+        0 2px 2px rgba(255, 255, 255, 0.22) inset,
+        0 -5px 12px rgba(45, 27, 0, 0.2) inset,
+        0 5px 0 rgba(20, 12, 2, 0.25),
+        0 18px 30px rgba(0, 0, 0, 0.52),
+        0 30px 55px rgba(0, 0, 0, 0.28);
+    }
     .fifa-card.tier-gold { background: var(--fifa-gold); }
     .fifa-card.tier-silver { background: var(--fifa-silver); }
     .fifa-card.tier-bronze { background: var(--fifa-bronze); }
@@ -166,7 +303,7 @@
 
     .fifa-ovr {
       font-family: 'Arial Narrow', 'Impact', sans-serif;
-      font-size: 1.85rem;
+      font-size: 2.15rem;
       font-weight: 900;
       line-height: 1;
       letter-spacing: -0.02em;
@@ -215,20 +352,26 @@
     .fifa-name {
       font-family: 'Arial Narrow', 'Franklin Gothic Medium Condensed', sans-serif;
       font-stretch: condensed;
-      font-size: 0.78rem;
+      font-size: 0.9rem;
       font-weight: 800;
       text-transform: uppercase;
-      letter-spacing: 0.02em;
+      letter-spacing: 0.06em;
       line-height: 1.1;
-      margin-bottom: 0.35rem;
-      min-height: 1.8em;
+      margin-top: auto;
+      margin-bottom: 0.4rem;
+      padding: 0.28rem 0.2rem;
+      min-height: 0;
+      text-align: center;
+      border-top: 1px solid rgba(54, 36, 5, 0.36);
+      border-bottom: 1px solid rgba(54, 36, 5, 0.36);
     }
 
     .fifa-stats {
       display: grid;
       grid-template-columns: 1fr 1fr;
-      gap: 0.1rem 0.35rem;
-      font-size: 0.62rem;
+      gap: 0.12rem 0.75rem;
+      padding: 0 0.35rem;
+      font-size: 0.72rem;
       font-weight: 700;
     }
 
@@ -236,10 +379,64 @@
     .fifa-stat abbr { opacity: 0.75; font-weight: 600; text-decoration: none; }
 
     .fifa-meta {
-      margin-top: 0.3rem;
-      font-size: 0.55rem;
+      margin-top: 0.35rem;
+      font-size: 0.6rem;
       opacity: 0.7;
       text-align: center;
+    }
+
+    .fifa-photo-placeholder {
+      position: absolute;
+      left: 34%;
+      top: 17%;
+      width: 54%;
+      height: 40%;
+      display: grid;
+      place-items: center;
+      border-radius: 50% 50% 42% 42%;
+      background: rgba(54, 36, 5, 0.12);
+      color: rgba(54, 36, 5, 0.42);
+      font-family: Impact, sans-serif;
+      font-size: 2.4rem;
+      z-index: 0;
+    }
+
+    .fifa-peer {
+      position: absolute;
+      right: 0.15rem;
+      top: 2.25rem;
+      padding: 0.12rem 0.28rem;
+      border-radius: 4px;
+      background: rgba(26, 39, 68, 0.8);
+      color: #fff;
+      font-size: 0.48rem;
+      font-weight: 800;
+      text-transform: uppercase;
+    }
+
+    .fifa-card-action {
+      margin-top: 0.2rem;
+      text-align: center;
+      font-size: 0.5rem;
+      font-weight: 800;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      opacity: 0.72;
+    }
+
+    .card-self-badge {
+      position: absolute;
+      left: 50%;
+      top: 5%;
+      transform: translateX(-50%);
+      z-index: 2;
+      padding: 0.12rem 0.35rem;
+      border-radius: 10px;
+      background: var(--accent);
+      color: white;
+      font-size: 0.5rem;
+      font-weight: 800;
+      text-transform: uppercase;
     }
 
     .fifa-card-add {
@@ -282,6 +479,64 @@
       gap: 0.75rem;
       margin-bottom: 0.75rem;
       flex-wrap: wrap;
+    }
+
+    .selection-toolbar {
+      display: flex;
+      align-items: center;
+      gap: 0.55rem;
+      flex-wrap: wrap;
+    }
+
+    .selection-count {
+      padding: 0.45rem 0.7rem;
+      border: 1px solid var(--line-white);
+      border-radius: 8px;
+      background: rgba(0, 0, 0, 0.25);
+      color: var(--text-muted);
+      font-size: 0.8rem;
+      font-weight: 700;
+    }
+
+    .selection-count.complete {
+      border-color: var(--success);
+      color: var(--success);
+      background: rgba(110, 207, 138, 0.1);
+    }
+
+    .player-select-toggle {
+      position: absolute;
+      right: 0.55rem;
+      top: 0.55rem;
+      z-index: 5;
+      display: grid;
+      place-items: center;
+      width: 31px;
+      height: 31px;
+      border: 2px solid rgba(26, 39, 68, 0.48);
+      border-radius: 50%;
+      background: rgba(245, 245, 242, 0.9);
+      color: #1a2744;
+      font-size: 1rem;
+      font-weight: 900;
+      cursor: pointer;
+      box-shadow: 0 3px 8px rgba(0,0,0,0.28);
+    }
+
+    .player-select-toggle.selected {
+      border-color: #145c32;
+      background: #3aa666;
+      color: white;
+    }
+
+    .fifa-card.selected {
+      border-color: rgba(110, 207, 138, 0.9);
+      box-shadow:
+        0 2px 2px rgba(255, 255, 255, 0.18) inset,
+        0 -5px 12px rgba(45, 27, 0, 0.18) inset,
+        0 0 0 3px rgba(110, 207, 138, 0.7),
+        0 12px 24px rgba(0, 0, 0, 0.5),
+        0 0 26px rgba(110, 207, 138, 0.2);
     }
 
     .btn-add-player {
@@ -494,6 +749,12 @@
       font-size: 1.1rem;
     }
 
+    .btn-primary:disabled {
+      opacity: 0.42;
+      cursor: not-allowed;
+      filter: grayscale(0.45);
+    }
+
     .btn-secondary {
       border: 2px solid var(--accent);
       background: transparent;
@@ -537,21 +798,246 @@
     .legend-swatch.oscuro { background: #4a6fa5; }
     #radar-svg { width: 100%; max-width: 340px; height: auto; }
     .cost-info { text-align: center; font-size: 0.78rem; color: var(--text-muted); }
+
+    .section-heading-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.75rem;
+      margin-bottom: 0.75rem;
+    }
+
+    .section-heading-row h2 { margin-bottom: 0; }
+
+    .peer-form-grid { display: grid; gap: 0.55rem; }
+
+    .rating-row {
+      display: grid;
+      grid-template-columns: minmax(90px, 1fr) repeat(5, 34px);
+      align-items: center;
+      gap: 0.3rem;
+    }
+
+    .rating-label { font-size: 0.78rem; color: var(--text-muted); }
+
+    .rating-choice input { position: absolute; opacity: 0; pointer-events: none; }
+    .rating-choice span {
+      display: grid;
+      place-items: center;
+      width: 34px;
+      height: 34px;
+      border: 1px solid var(--line-white);
+      border-radius: 7px;
+      background: var(--input-bg);
+      color: var(--text-muted);
+      font-size: 0.78rem;
+      cursor: pointer;
+    }
+
+    .rating-choice input:checked + span {
+      border-color: var(--accent);
+      background: var(--accent);
+      color: white;
+      font-weight: 800;
+    }
+
+    .peer-note {
+      padding: 0.65rem 0.8rem;
+      margin-bottom: 0.8rem;
+      border-left: 3px solid var(--accent);
+      background: rgba(232, 98, 44, 0.1);
+      color: var(--text-muted);
+      font-size: 0.75rem;
+    }
+
+    .match-voting { display: none; }
+    .match-voting.visible { display: block; }
+
+    .match-player-row {
+      display: grid;
+      grid-template-columns: minmax(110px, 1fr) repeat(5, 42px);
+      align-items: center;
+      gap: 0.35rem;
+      padding: 0.6rem 0;
+      border-bottom: 1px solid var(--line-white);
+    }
+
+    .match-player-info strong { display: block; font-size: 0.88rem; }
+    .match-player-info small { color: var(--text-muted); font-size: 0.68rem; }
+
+    .performance-choice input { position: absolute; opacity: 0; pointer-events: none; }
+    .performance-choice span {
+      display: grid;
+      place-items: center;
+      width: 42px;
+      height: 42px;
+      border: 1px solid var(--line-white);
+      border-radius: 9px;
+      background: var(--input-bg);
+      cursor: pointer;
+      font-weight: 800;
+      font-size: 0.74rem;
+    }
+
+    .performance-choice.down span { color: #ff7777; }
+    .performance-choice.flat span { color: #f5c542; }
+    .performance-choice.up span { color: #6ecf8a; }
+    .performance-choice input:checked + span {
+      border-color: currentColor;
+      box-shadow: 0 0 0 2px currentColor;
+      background: rgba(255,255,255,0.08);
+    }
+
+    .newspaper-section { display: none; }
+    .newspaper-section.visible { display: block; }
+
+    .newspaper {
+      position: relative;
+      overflow: hidden;
+      padding: clamp(1rem, 4vw, 2rem);
+      border-radius: 3px;
+      background:
+        repeating-linear-gradient(0deg, rgba(65, 53, 39, 0.025) 0 1px, transparent 1px 4px),
+        #eee7d6;
+      color: #252019;
+      box-shadow: 0 12px 35px rgba(0,0,0,0.38);
+    }
+
+    .newspaper::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      box-shadow: inset 0 0 50px rgba(80, 55, 20, 0.12);
+    }
+
+    .paper-masthead {
+      display: flex;
+      align-items: end;
+      justify-content: space-between;
+      gap: 1rem;
+      padding-bottom: 0.45rem;
+      border-bottom: 4px double #252019;
+    }
+
+    .paper-brand {
+      font-family: Georgia, 'Times New Roman', serif;
+      font-size: clamp(1.55rem, 6vw, 3.2rem);
+      font-weight: 900;
+      line-height: 0.9;
+      letter-spacing: -0.04em;
+      text-transform: uppercase;
+    }
+
+    .paper-date { font: 0.68rem Georgia, serif; white-space: nowrap; }
+    .paper-kicker { margin-top: 0.8rem; color: #9b3215; font: 700 0.68rem Arial, sans-serif; text-transform: uppercase; }
+    .paper-headline {
+      margin: 0.25rem 0 0.35rem;
+      font: 900 clamp(1.8rem, 7vw, 4.2rem)/0.94 Georgia, serif;
+      letter-spacing: -0.045em;
+    }
+
+    .paper-deck {
+      padding-bottom: 0.75rem;
+      border-bottom: 1px solid #7c7467;
+      font: italic 1rem/1.35 Georgia, serif;
+      color: #4c4439;
+    }
+
+    .paper-grid {
+      display: grid;
+      grid-template-columns: 1.2fr 0.8fr;
+      gap: 1.2rem;
+      margin-top: 1rem;
+    }
+
+    .paper-lead {
+      columns: 2 190px;
+      column-gap: 1rem;
+      font: 0.85rem/1.55 Georgia, serif;
+    }
+
+    .paper-article { break-inside: avoid; margin-bottom: 0.85rem; }
+    .paper-article strong { font-family: Arial, sans-serif; }
+
+    .paper-ratings {
+      border-left: 1px solid #7c7467;
+      padding-left: 1rem;
+    }
+
+    .paper-ratings h4 {
+      margin-bottom: 0.55rem;
+      font: 900 1rem Arial, sans-serif;
+      text-transform: uppercase;
+    }
+
+    .paper-rating-row {
+      display: grid;
+      grid-template-columns: 20px 1fr auto;
+      gap: 0.45rem;
+      padding: 0.35rem 0;
+      border-bottom: 1px dotted #8b8173;
+      font: 0.78rem Arial, sans-serif;
+    }
+
+    .trend-up { color: #267743; }
+    .trend-flat { color: #8d6a08; }
+    .trend-down { color: #a52f29; }
+
+    @media (max-width: 620px) {
+      .players-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.55rem; }
+      .fifa-card { max-width: none; }
+      .rating-row { grid-template-columns: 1fr repeat(5, 30px); }
+      .rating-choice span { width: 30px; height: 30px; }
+      .match-player-row { grid-template-columns: 1fr repeat(5, 36px); }
+      .performance-choice span { width: 36px; height: 36px; }
+      .paper-grid { grid-template-columns: 1fr; }
+      .paper-ratings { border-left: 0; border-top: 1px solid #7c7467; padding: 0.8rem 0 0; }
+      .form-grid.cols-3 { grid-template-columns: 1fr 1fr; }
+    }
   </style>
 </head>
 <body>
+  <div class="login-overlay" id="login-overlay">
+    <div class="login-card">
+      <div class="login-ball">⚽</div>
+      <h2>3er Tiempo</h2>
+      <p class="login-copy">Elegí tu jugador. Tu nombre es tu usuario y vos definís la contraseña.</p>
+      <form class="login-form" id="login-form">
+        <label>
+          Jugador
+          <select id="login-player" required>
+            <option value="">Elegí tu nombre</option>
+          </select>
+        </label>
+        <label>
+          Contraseña
+          <input id="login-password" type="password" minlength="6" autocomplete="current-password" required>
+        </label>
+        <button class="login-submit" id="login-submit" type="submit">Ingresar</button>
+        <p class="login-message" id="login-message"></p>
+      </form>
+      <p class="prototype-note">Prototipo local: las cuentas de prueba viven solo en este dispositivo. El backend real protegerá las contraseñas.</p>
+    </div>
+  </div>
+
   <div class="container">
     <header>
       <h1>3er Tiempo</h1>
-      <p class="subtitle">Cartas FIFA · Equipos parejos</p>
+      <p class="subtitle">Cartas · Equipos parejos · La crónica del partido</p>
     </header>
+
+    <div class="session-bar" id="session-bar">
+      <span class="session-user">Jugando como <strong id="session-username"></strong></span>
+      <button class="btn-ghost" id="btn-logout" type="button">Cerrar sesión</button>
+    </div>
 
     <section class="card">
       <h2>Formato de partido</h2>
       <div class="format-buttons" id="format-buttons">
         <button class="format-btn" data-size="5">Fútbol 5</button>
-        <button class="format-btn" data-size="7">Fútbol 7</button>
-        <button class="format-btn active" data-size="9">Fútbol 9</button>
+        <button class="format-btn active" data-size="7">Fútbol 7</button>
+        <button class="format-btn" data-size="9">Fútbol 9</button>
         <button class="format-btn" data-size="11">Fútbol 11</button>
       </div>
       <div class="warning-box" id="format-warning"></div>
@@ -561,13 +1047,17 @@
       <h2>Plantilla</h2>
       <div class="roster-toolbar">
         <p class="load-status" id="load-status">Cargando jugadores…</p>
-        <button type="button" class="btn-add-player" id="btn-add-player">+ Agregar jugador</button>
+        <div class="selection-toolbar">
+          <span class="selection-count" id="selection-count">0 de 14 convocados</span>
+          <button type="button" class="btn-ghost" id="btn-clear-selection">Limpiar</button>
+          <button type="button" class="btn-add-player" id="btn-add-player">+ Agregar jugador</button>
+        </div>
       </div>
       <div class="players-grid" id="players-grid"></div>
     </section>
 
     <div class="actions">
-      <button class="btn-primary" id="btn-armar">Armar equipos</button>
+      <button class="btn-primary" id="btn-armar" disabled>Seleccioná 14 jugadores</button>
       <button class="btn-secondary" id="btn-barajar" disabled>Volver a barajar</button>
     </div>
 
@@ -593,6 +1083,23 @@
         <svg id="radar-svg" viewBox="0 0 300 300" xmlns="http://www.w3.org/2000/svg"></svg>
         <p class="cost-info" id="cost-info"></p>
       </div>
+      <div class="actions" style="margin:1rem 0 0">
+        <button class="btn-primary" id="btn-registrar-partido" type="button">Registrar partido y votar</button>
+      </div>
+    </section>
+
+    <section class="card match-voting" id="match-voting">
+      <div class="section-heading-row">
+        <h2>Votación postpartido</h2>
+        <span class="load-status" id="match-vote-status"></span>
+      </div>
+      <p class="peer-note">Calificá del 1 al 5. Tu propio nombre no aparece: nadie puede votarse a sí mismo.</p>
+      <div id="match-vote-list"></div>
+      <button class="btn-primary" id="btn-save-match-votes" type="button" style="width:100%;margin-top:1rem">Guardar votos y publicar periódico</button>
+    </section>
+
+    <section class="newspaper-section" id="newspaper-section">
+      <div class="newspaper" id="newspaper"></div>
     </section>
   </div>
 
@@ -612,16 +1119,34 @@
     </div>
   </div>
 
+  <div class="modal-overlay" id="peer-modal-overlay">
+    <div class="modal">
+      <div class="modal-header">
+        <h3 id="peer-modal-title">Calificar jugador</h3>
+        <button class="modal-close" id="peer-modal-close" aria-label="Cerrar">&times;</button>
+      </div>
+      <div class="modal-preview" id="peer-modal-preview"></div>
+      <p class="peer-note">Tu voto se promedia con el de los demás. No modifica los datos personales del jugador.</p>
+      <form class="peer-form-grid" id="peer-rating-form"></form>
+      <div class="modal-footer">
+        <button type="button" class="btn-save" id="btn-save-peer-rating">Guardar valoración</button>
+        <span class="save-status" id="peer-save-status"></span>
+      </div>
+    </div>
+  </div>
+
   <script src="config.js"></script>
   <script src="api.js"></script>
+  <script src="auth.js"></script>
+  <script src="ratings.js"></script>
   <script>
     const CARD_ATTRS = ['velocidad', 'tiro', 'pase', 'regate', 'defensa', 'fisico'];
     const CARD_LABELS = ['RIT', 'TIR', 'PAS', 'REG', 'DEF', 'FÍS'];
     const CARD_LABELS_FULL = ['Velocidad', 'Tiro', 'Pase', 'Regate', 'Defensa', 'Físico'];
 
-    const BALANCE_ATTRS = [...CARD_ATTRS, 'portero'];
+    const BALANCE_ATTRS = [...CARD_ATTRS];
     const BALANCE_WEIGHTS = {
-      velocidad: 1, tiro: 1, pase: 1, regate: 1, defensa: 1, fisico: 1, portero: 0.6
+      velocidad: 1, tiro: 1, pase: 1, regate: 1, defensa: 1, fisico: 1
     };
 
     const POSICIONES_CAMPO = ['DEF', 'MED', 'DEL', 'LIB'];
@@ -631,11 +1156,56 @@
     const TOP_N = 5;
 
     let players = [];
-    let teamSize = 9;
+    let teamSize = 7;
     let lastTopCombos = [];
     let editingIdx = -1;
     let isCreating = false;
     let pendingPhoto = null;
+    let currentSession = null;
+    let currentCombo = null;
+    let currentMatch = null;
+    let peerRatingIdx = -1;
+    let selectedPlayerNames = loadPlayerSelection();
+
+    function loadPlayerSelection() {
+      try {
+        const saved = JSON.parse(localStorage.getItem(STORAGE_KEYS.selection) || '[]');
+        return new Set(Array.isArray(saved) ? saved : []);
+      } catch {
+        return new Set();
+      }
+    }
+
+    function savePlayerSelection() {
+      localStorage.setItem(STORAGE_KEYS.selection, JSON.stringify([...selectedPlayerNames]));
+    }
+
+    function selectionKey(playerOrName) {
+      const name = typeof playerOrName === 'string' ? playerOrName : playerOrName?.nombre;
+      return AuthService.normalize(name);
+    }
+
+    function isPlayerSelected(playerOrName) {
+      return selectedPlayerNames.has(selectionKey(playerOrName));
+    }
+
+    function selectedPlayers() {
+      return players.filter(isPlayerSelected);
+    }
+
+    function escapeHtml(value) {
+      return String(value ?? '')
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#039;');
+    }
+
+    function isCurrentUser(playerOrName) {
+      const name = typeof playerOrName === 'string' ? playerOrName : playerOrName?.nombre;
+      return Boolean(currentSession && AuthService.normalize(name) === AuthService.normalize(currentSession.username));
+    }
 
     function avg(...vals) {
       const v = vals.filter(n => !isNaN(n));
@@ -749,17 +1319,31 @@
       }
     }
 
+    function computeBaseCard(p) {
+      return {
+        velocidad: Number(p.vel_fis) || 3,
+        tiro: Number(p.remate) || 3,
+        pase: avg(Number(p.pase_corto) || 3, Number(p.pase_largo) || 3),
+        regate: Number(p.regate) || 3,
+        defensa: avg(Number(p.marca) || 3, Number(p.posicionamiento) || 3),
+        fisico: avg(Number(p.resistencia) || 3, Number(p.fuerza) || 3),
+        portero: Number(p.arquero) || 3
+      };
+    }
+
     function computeCard(p) {
-      const velocidad = p.vel_fis;
-      const fisico = roundStat(avg(p.resistencia, p.fuerza));
-      const regate = p.regate;
-      const pase = roundStat(avg(p.pase_corto, p.pase_largo));
-      const tiro = p.remate;
-      const defensa = roundStat(avg(p.marca, p.posicionamiento));
-      const portero = roundStat(avg(p.atajar, p.reflejos, p.salidas));
-      const cardStats = [velocidad, tiro, pase, regate, defensa, fisico];
+      const base = computeBaseCard(p);
+      const peer = RatingsService.getPeerAverage(p.nombre);
+      const source = peer.count ? peer.stats : base;
+      const cardStats = CARD_ATTRS.map(key => source[key]);
       const media = Math.round(avg(...cardStats) * 20);
-      return { velocidad, tiro, pase, regate, defensa, fisico, portero, media, cardStats };
+      return {
+        ...source,
+        media,
+        cardStats,
+        ratingCount: peer.count,
+        usesPeerAverage: peer.count > 0
+      };
     }
 
     function tierClass(media) {
@@ -779,8 +1363,8 @@
         ? '<span class="fifa-pos-arq">ARQ</span>'
         : '';
       return `<div class="fifa-pos-wrap">
-        <span class="fifa-pos-main">${p.posicion_1 || 'MED'}</span>
-        <span class="fifa-pos-sub">${p.posicion_2 || 'DEL'}</span>
+        <span class="fifa-pos-main">${escapeHtml(p.posicion_1 || 'MED')}</span>
+        <span class="fifa-pos-sub">${escapeHtml(p.posicion_2 || 'DEL')}</span>
         ${arq}
       </div>`;
     }
@@ -790,30 +1374,43 @@
       const cls = tierClass(c.media);
       const photo = getPlayerPhoto(p);
       const photoHtml = photo
-        ? `<img class="fifa-card-photo" src="${photo}" alt="" loading="lazy">`
+        ? `<img class="fifa-card-photo" src="${escapeHtml(photo)}" alt="Foto de ${escapeHtml(p.nombre)}" loading="lazy">`
+        : `<div class="fifa-photo-placeholder" aria-label="Foto pendiente">${escapeHtml(String(p.nombre || '?').charAt(0))}</div>`;
+      const peerBadge = c.ratingCount
+        ? `<span class="fifa-peer">${c.ratingCount} voto${c.ratingCount === 1 ? '' : 's'}</span>`
+        : '<span class="fifa-peer">base</span>';
+      const selfBadge = isCurrentUser(p) ? '<span class="card-self-badge">Tu carta</span>' : '';
+      const selected = isPlayerSelected(p);
+      const selectionButton = clickable
+        ? `<button class="player-select-toggle ${selected ? 'selected' : ''}" type="button" aria-label="${selected ? 'Quitar' : 'Convocar'} a ${escapeHtml(p.nombre)}">${selected ? '✓' : '+'}</button>`
         : '';
       return `
-        <div class="fifa-card ${cls}" ${clickable ? '' : ''}>
+        <div class="fifa-card ${cls} ${selected ? 'selected' : ''}" ${clickable ? '' : ''}>
+          ${selectionButton}
+          ${selfBadge}
           ${photoHtml}
           <div class="fifa-card-body">
+            ${peerBadge}
             <div class="fifa-card-top">
               <div class="fifa-ovr">${c.media}</div>
               ${posicionesCardHtml(p)}
             </div>
-            <div class="fifa-name">${p.nombre}</div>
+            <div class="fifa-name">${escapeHtml(p.nombre)}</div>
             <div class="fifa-stats">
               ${CARD_LABELS.map((lbl, i) =>
-                `<div class="fifa-stat"><abbr title="${CARD_LABELS_FULL[i]}">${lbl}</abbr><span>${c.cardStats[i]}</span></div>`
+                `<div class="fifa-stat"><abbr title="${CARD_LABELS_FULL[i]}">${lbl}</abbr><span>${c.cardStats[i].toFixed(1)}</span></div>`
               ).join('')}
             </div>
-            <div class="fifa-meta">${p.edad}a · ${p.altura}cm · ${p.pie_habil}</div>
+            <div class="fifa-meta">${p.edad}a · ${p.altura}cm · ${escapeHtml(p.pie_habil)}</div>
+            <div class="fifa-card-action">${isCurrentUser(p) ? 'Editar perfil' : 'Calificar jugador'}</div>
           </div>
         </div>`;
     }
 
-    document.addEventListener('DOMContentLoaded', () => {
+    document.addEventListener('DOMContentLoaded', async () => {
       initFormatButtons();
-      loadPlayers();
+      await loadPlayers();
+      initAuth();
       document.getElementById('btn-armar').addEventListener('click', () => armarEquipos(false));
       document.getElementById('btn-barajar').addEventListener('click', () => armarEquipos(true));
       document.getElementById('modal-close').addEventListener('click', closeModal);
@@ -822,7 +1419,105 @@
       });
       document.getElementById('btn-save').addEventListener('click', () => savePlayer(editingIdx));
       document.getElementById('btn-add-player').addEventListener('click', openCreateEditor);
+      document.getElementById('btn-clear-selection').addEventListener('click', clearPlayerSelection);
+      document.getElementById('peer-modal-close').addEventListener('click', closePeerModal);
+      document.getElementById('peer-modal-overlay').addEventListener('click', event => {
+        if (event.target.id === 'peer-modal-overlay') closePeerModal();
+      });
+      document.getElementById('btn-save-peer-rating').addEventListener('click', savePeerRating);
+      document.getElementById('btn-registrar-partido').addEventListener('click', registerCurrentMatch);
+      document.getElementById('btn-save-match-votes').addEventListener('click', saveMatchVotes);
+      document.getElementById('btn-logout').addEventListener('click', logout);
     });
+
+    function populateLoginPlayers() {
+      const select = document.getElementById('login-player');
+      select.innerHTML = '<option value="">Elegí tu nombre</option>' +
+        players.map(player =>
+          `<option value="${escapeHtml(player.nombre)}">${escapeHtml(player.nombre)}</option>`
+        ).join('');
+    }
+
+    function initAuth() {
+      populateLoginPlayers();
+      currentSession = AuthService.getSession();
+      if (currentSession && players.some(player => isCurrentUser(player))) {
+        showAppSession();
+      } else {
+        currentSession = null;
+        document.getElementById('login-overlay').classList.remove('hidden');
+      }
+
+      const form = document.getElementById('login-form');
+      const playerSelect = document.getElementById('login-player');
+      playerSelect.addEventListener('change', updateLoginMode);
+      form.addEventListener('submit', handleLoginSubmit);
+    }
+
+    async function updateLoginMode() {
+      const username = document.getElementById('login-player').value;
+      const button = document.getElementById('login-submit');
+      const message = document.getElementById('login-message');
+      message.textContent = '';
+      message.className = 'login-message';
+      if (!username) {
+        button.textContent = 'Ingresar';
+        return;
+      }
+      button.textContent = await AuthService.isRegistered(username)
+        ? 'Ingresar'
+        : 'Crear contraseña';
+    }
+
+    async function handleLoginSubmit(event) {
+      event.preventDefault();
+      const username = document.getElementById('login-player').value;
+      const password = document.getElementById('login-password').value;
+      const message = document.getElementById('login-message');
+      const button = document.getElementById('login-submit');
+
+      message.textContent = 'Verificando…';
+      message.className = 'login-message';
+      button.disabled = true;
+      try {
+        const registered = await AuthService.isRegistered(username);
+        currentSession = registered
+          ? await AuthService.login(username, password)
+          : await AuthService.register(username, password);
+        document.getElementById('login-password').value = '';
+        showAppSession();
+      } catch (error) {
+        message.textContent = error.message;
+        message.className = 'login-message error';
+      } finally {
+        button.disabled = false;
+        updateLoginMode();
+      }
+    }
+
+    function showAppSession() {
+      document.getElementById('login-overlay').classList.add('hidden');
+      document.getElementById('session-username').textContent = currentSession.username;
+      document.getElementById('session-bar').classList.add('visible');
+      renderGrid();
+      const latestMatch = RatingsService.listMatches()[0];
+      if (latestMatch) {
+        currentMatch = latestMatch;
+        renderMatchVoting(currentMatch);
+        document.getElementById('match-voting').classList.add('visible');
+      }
+      renderLatestNewspaper();
+    }
+
+    async function logout() {
+      await AuthService.logout();
+      currentSession = null;
+      currentMatch = null;
+      document.getElementById('session-bar').classList.remove('visible');
+      document.getElementById('match-voting').classList.remove('visible');
+      document.getElementById('login-overlay').classList.remove('hidden');
+      renderGrid();
+    }
 
     function initFormatButtons() {
       document.querySelectorAll('.format-btn').forEach(btn => {
@@ -830,7 +1525,10 @@
           document.querySelectorAll('.format-btn').forEach(b => b.classList.remove('active'));
           btn.classList.add('active');
           teamSize = Number(btn.dataset.size);
+          lastTopCombos = [];
+          currentCombo = null;
           updateFormatWarning();
+          updateSelectionUI();
         });
       });
       updateFormatWarning();
@@ -838,13 +1536,67 @@
 
     function updateFormatWarning() {
       const needed = teamSize * 2;
-      const diff = players.length - needed;
+      const count = selectedPlayers().length;
+      const diff = count - needed;
       const box = document.getElementById('format-warning');
       if (diff === 0) { box.classList.remove('visible'); return; }
       box.classList.add('visible');
-      box.textContent = diff > 0
-        ? `⚠ ${players.length} jugadores, formato ${teamSize} necesita ${needed}. Sobran ${diff}.`
-        : `⚠ Faltan ${Math.abs(diff)} jugadores para formato ${teamSize}.`;
+      if (count === 0) {
+        box.textContent = `Marcá los ${needed} jugadores confirmados para Fútbol ${teamSize}.`;
+      } else {
+        box.textContent = diff > 0
+          ? `Hay ${count} convocados. Quitá ${diff} para armar equipos de ${teamSize}.`
+          : `Hay ${count} convocados. Faltan ${Math.abs(diff)} para completar los ${needed}.`;
+      }
+    }
+
+    function updateSelectionUI() {
+      const needed = teamSize * 2;
+      const count = selectedPlayers().length;
+      const counter = document.getElementById('selection-count');
+      const buildButton = document.getElementById('btn-armar');
+
+      counter.textContent = `${count} de ${needed} convocados`;
+      counter.classList.toggle('complete', count === needed);
+      buildButton.disabled = count !== needed;
+      buildButton.textContent = count === needed
+        ? 'Armar equipos parejos'
+        : count < needed
+          ? `Seleccioná ${needed - count} más`
+          : `Quitá ${count - needed}`;
+      updateFormatWarning();
+    }
+
+    function togglePlayerSelection(player) {
+      const key = selectionKey(player);
+      const needed = teamSize * 2;
+
+      if (selectedPlayerNames.has(key)) {
+        selectedPlayerNames.delete(key);
+      } else {
+        if (selectedPlayers().length >= needed) {
+          const box = document.getElementById('format-warning');
+          box.textContent = `La convocatoria ya tiene ${needed} jugadores. Quitá uno antes de agregar otro.`;
+          box.classList.add('visible');
+          return;
+        }
+        selectedPlayerNames.add(key);
+      }
+
+      savePlayerSelection();
+      lastTopCombos = [];
+      currentCombo = null;
+      renderGrid();
+      updateSelectionUI();
+    }
+
+    function clearPlayerSelection() {
+      selectedPlayerNames.clear();
+      savePlayerSelection();
+      lastTopCombos = [];
+      currentCombo = null;
+      renderGrid();
+      updateSelectionUI();
     }
 
     async function loadPlayers() {
@@ -865,8 +1617,11 @@
         status.classList.add('error');
       }
 
+      const validKeys = new Set(players.map(selectionKey));
+      selectedPlayerNames = new Set([...selectedPlayerNames].filter(key => validKeys.has(key)));
+      savePlayerSelection();
       renderGrid();
-      updateFormatWarning();
+      updateSelectionUI();
     }
 
     function normalizePlayer(p) {
@@ -886,6 +1641,10 @@
       STAT_FIELDS.forEach(f => {
         out[f] = roundStat(Number(p[f]) || 3);
       });
+      out.arquero = roundStat(
+        Number(p.arquero) ||
+        avg(Number(p.atajar) || 3, Number(p.reflejos) || 3, Number(p.salidas) || 3)
+      );
       return out;
     }
 
@@ -896,7 +1655,27 @@
         const wrap = document.createElement('div');
         wrap.innerHTML = buildFifaCardHtml(p, true);
         const card = wrap.firstElementChild;
-        card.addEventListener('click', () => openEditor(idx));
+        card.tabIndex = 0;
+        card.setAttribute('role', 'button');
+        card.setAttribute('aria-label', isCurrentUser(p)
+          ? `Editar tu carta: ${p.nombre}`
+          : `Calificar a ${p.nombre}`);
+        const selectionButton = card.querySelector('.player-select-toggle');
+        selectionButton?.addEventListener('click', event => {
+          event.stopPropagation();
+          togglePlayerSelection(p);
+        });
+        card.addEventListener('click', () => {
+          if (!currentSession) return;
+          if (isCurrentUser(p)) openEditor(idx);
+          else openPeerRating(idx);
+        });
+        card.addEventListener('keydown', event => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            card.click();
+          }
+        });
         grid.appendChild(card);
       });
 
@@ -912,7 +1691,7 @@
         ? `<div class="form-section">
             <h4>Nombre</h4>
             <div class="field field-full">
-              <input type="text" name="nombre" required maxlength="40" placeholder="Nombre del jugador" value="${p.nombre === 'Nuevo jugador' ? '' : p.nombre}">
+              <input type="text" name="nombre" required maxlength="40" placeholder="Nombre del jugador" value="${p.nombre === 'Nuevo jugador' ? '' : escapeHtml(p.nombre)}">
             </div>
           </div>`
         : '';
@@ -931,7 +1710,7 @@
           <p class="photo-hint">Desde la galería o cámara del celular</p>
           <div class="field field-full" style="margin-top:0.65rem">
             <label>Link de imagen (opcional)</label>
-            <input type="url" name="foto_url" placeholder="https://..." value="${p.foto_url || ''}">
+            <input type="url" name="foto_url" placeholder="https://..." value="${escapeHtml(p.foto_url || '')}">
           </div>
         </div>
         <div class="form-section">
@@ -963,37 +1742,8 @@
             También juega de arquero (rotación en el arco)
           </label>
         </div>
-        <div class="form-section">
-          <h4>Físico</h4>
-          <div class="form-grid cols-3">
-            ${statField('vel_fis', 'Velocidad', p)}
-            ${statField('resistencia', 'Resistencia', p)}
-            ${statField('fuerza', 'Fuerza', p)}
-          </div>
-        </div>
-        <div class="form-section">
-          <h4>Técnicos</h4>
-          <div class="form-grid">
-            ${statField('regate', 'Regate', p)}
-            ${statField('pase_corto', 'Pase corto', p)}
-            ${statField('pase_largo', 'Pase largo', p)}
-            ${statField('posicionamiento', 'Posicionamiento', p)}
-            ${statField('remate', 'Remate', p)}
-          </div>
-        </div>
-        <div class="form-section">
-          <h4>Defensivo</h4>
-          <div class="form-grid">
-            ${statField('marca', 'Marca', p)}
-          </div>
-        </div>
-        <div class="form-section">
-          <h4>Portero <span style="font-weight:normal;text-transform:none;color:var(--text-muted)">(rotación en el arco)</span></h4>
-          <div class="form-grid cols-3">
-            ${statField('atajar', 'Atajar', p)}
-            ${statField('reflejos', 'Reflejos', p)}
-            ${statField('salidas', 'Salidas', p)}
-          </div>
+        <div class="peer-note">
+          Los atributos de la carta no se autoeditan. Arrancan con valor base 3 y se reemplazan por el promedio de las valoraciones de los demás jugadores.
         </div>`;
     }
 
@@ -1007,6 +1757,7 @@
         el.addEventListener('input', updateModalPreview);
         el.addEventListener('change', updateModalPreview);
       });
+      const photoInput = form.querySelector('#photo-input');
       if (photoInput) {
         photoInput.addEventListener('change', e => {
           const file = e.target.files && e.target.files[0];
@@ -1077,9 +1828,14 @@
       base.foto_url = String(form.querySelector('[name=foto_url]')?.value || '').trim();
       if (pendingPhoto) base.foto_url = pendingPhoto.dataUrl;
       STAT_FIELDS.forEach(f => {
-        let v = roundStat(Number(form.querySelector(`[name=${f}]`).value));
-        base[f] = v;
-        form.querySelector(`[name=${f}]`).value = v;
+        const input = form.querySelector(`[name=${f}]`);
+        if (input) {
+          const value = roundStat(Number(input.value));
+          base[f] = value;
+          input.value = value;
+        } else if (base[f] == null) {
+          base[f] = 3;
+        }
       });
       return base;
     }
@@ -1099,6 +1855,69 @@
       isCreating = false;
       pendingPhoto = null;
       document.getElementById('btn-save').textContent = 'Guardar cambios';
+    }
+
+    const PEER_LABELS = {
+      velocidad: 'Velocidad',
+      tiro: 'Remate',
+      pase: 'Pase',
+      regate: 'Regate',
+      defensa: 'Defensa',
+      fisico: 'Físico',
+      portero: 'Arquero'
+    };
+
+    function openPeerRating(idx) {
+      if (!currentSession || isCurrentUser(players[idx])) return;
+      peerRatingIdx = idx;
+      const player = players[idx];
+      const existing = RatingsService.getMyPeerRating(currentSession.username, player.nombre);
+      const base = computeBaseCard(player);
+
+      document.getElementById('peer-modal-title').textContent = `Calificar a ${player.nombre}`;
+      document.getElementById('peer-modal-preview').innerHTML = buildFifaCardHtml(player, false);
+      document.getElementById('peer-save-status').textContent = '';
+      document.getElementById('peer-save-status').className = 'save-status';
+      document.getElementById('peer-rating-form').innerHTML = RatingsService.cardKeys.map(key => {
+        const selected = Math.round(existing?.[key] || base[key] || 3);
+        return `<div class="rating-row">
+          <span class="rating-label">${PEER_LABELS[key]}</span>
+          ${[1, 2, 3, 4, 5].map(value => `
+            <label class="rating-choice">
+              <input type="radio" name="peer_${key}" value="${value}" ${selected === value ? 'checked' : ''}>
+              <span>${value}</span>
+            </label>`).join('')}
+        </div>`;
+      }).join('');
+      document.getElementById('peer-modal-overlay').classList.add('open');
+    }
+
+    function closePeerModal() {
+      document.getElementById('peer-modal-overlay').classList.remove('open');
+      peerRatingIdx = -1;
+    }
+
+    function savePeerRating() {
+      if (peerRatingIdx < 0 || !currentSession) return;
+      const player = players[peerRatingIdx];
+      const form = document.getElementById('peer-rating-form');
+      const stats = {};
+      RatingsService.cardKeys.forEach(key => {
+        stats[key] = Number(form.querySelector(`[name=peer_${key}]:checked`)?.value || 3);
+      });
+
+      const status = document.getElementById('peer-save-status');
+      try {
+        RatingsService.savePeerRating(currentSession.username, player.nombre, stats);
+        status.textContent = 'guardado';
+        status.className = 'save-status saved';
+        renderGrid();
+        if (currentCombo) renderResults(currentCombo);
+        document.getElementById('peer-modal-preview').innerHTML = buildFifaCardHtml(player, false);
+      } catch (error) {
+        status.textContent = error.message;
+        status.className = 'save-status error';
+      }
     }
 
     function playerExists(nombre, excludeIdx) {
@@ -1129,13 +1948,23 @@
       statusEl.className = 'save-status saving';
 
       try {
-        if (pendingPhoto) {
-          const fotoUrl = await PlayerApi.uploadPhoto(data.nombre, pendingPhoto);
-          if (fotoUrl) data.foto_url = fotoUrl;
-          pendingPhoto = null;
+        if (isCreating) {
+          const initialData = pendingPhoto ? { ...data, foto_url: '' } : data;
+          await PlayerApi.savePlayer(initialData, { create: true });
+          if (pendingPhoto) {
+            const fotoUrl = await PlayerApi.uploadPhoto(data.nombre, pendingPhoto);
+            if (fotoUrl) data.foto_url = fotoUrl;
+            pendingPhoto = null;
+            await PlayerApi.savePlayer(data, { create: false });
+          }
+        } else {
+          if (pendingPhoto) {
+            const fotoUrl = await PlayerApi.uploadPhoto(data.nombre, pendingPhoto);
+            if (fotoUrl) data.foto_url = fotoUrl;
+            pendingPhoto = null;
+          }
+          await PlayerApi.savePlayer(data, { create: false });
         }
-
-        await PlayerApi.savePlayer(data, { create: isCreating });
 
         if (isCreating) {
           players.push(data);
@@ -1159,7 +1988,7 @@
       }
 
       renderGrid();
-      updateFormatWarning();
+      updateSelectionUI();
       if (editingIdx >= 0) initPhotoInForm(players[editingIdx]);
       updateModalPreview();
     }
@@ -1187,26 +2016,45 @@
       for (const attr of BALANCE_ATTRS) {
         cost += Math.abs(teamAverage(teamA, attr) - teamAverage(teamB, attr)) * BALANCE_WEIGHTS[attr];
       }
+
+      const goalkeepersA = teamA.filter(player => player.juega_arco);
+      const goalkeepersB = teamB.filter(player => player.juega_arco);
+      const totalGoalkeepers = goalkeepersA.length + goalkeepersB.length;
+      if (totalGoalkeepers >= 2 && (!goalkeepersA.length || !goalkeepersB.length)) {
+        cost += 50;
+      }
+      if (goalkeepersA.length && goalkeepersB.length) {
+        const strengthA = Math.max(...goalkeepersA.map(player => computeCard(player).portero));
+        const strengthB = Math.max(...goalkeepersB.map(player => computeCard(player).portero));
+        cost += Math.abs(strengthA - strengthB) * 0.8;
+      }
       return cost;
     }
 
     function effectiveTeamSize() {
-      return Math.min(teamSize, Math.floor(players.length / 2));
+      return selectedPlayers().length === teamSize * 2 ? teamSize : 0;
     }
 
     function findBestCombos() {
       const n = effectiveTeamSize();
       if (n < 1) return [];
       const results = [];
+      const pool = selectedPlayers();
       for (let i = 0; i < ITERATIONS; i++) {
-        const shuffled = shuffle(players);
+        const shuffled = shuffle(pool);
         const teamA = shuffled.slice(0, n);
         const teamB = shuffled.slice(n, n * 2);
-        const sobrantes = shuffled.slice(n * 2);
-        results.push({ teamA, teamB, sobrantes, cost: comboCost(teamA, teamB) });
+        results.push({ teamA, teamB, sobrantes: [], cost: comboCost(teamA, teamB) });
       }
-      results.sort((a, b) => a.cost - b.cost);
-      return results.slice(0, TOP_N);
+      const unique = new Map();
+      results.forEach(result => {
+        const sides = [result.teamA, result.teamB]
+          .map(team => team.map(selectionKey).sort().join('|'))
+          .sort();
+        const signature = sides.join('::');
+        if (!unique.has(signature)) unique.set(signature, result);
+      });
+      return [...unique.values()].sort((a, b) => a.cost - b.cost).slice(0, TOP_N);
     }
 
     function armarEquipos(rebarajar) {
@@ -1218,6 +2066,7 @@
         lastTopCombos = findBestCombos();
         combo = lastTopCombos[Math.floor(Math.random() * lastTopCombos.length)];
       }
+      currentCombo = combo;
       renderResults(combo);
       document.getElementById('results').classList.add('visible');
       document.getElementById('btn-barajar').disabled = false;
@@ -1227,8 +2076,8 @@
       fillTeamList('team-claro-list', teamA);
       fillTeamList('team-oscuro-list', teamB);
       const sobEl = document.getElementById('sobrantes-info');
-      sobEl.innerHTML = sobrantes.length
-        ? `<strong>Fuera:</strong> ${sobrantes.map(p => p.nombre).join(', ')}`
+      sobEl.textContent = sobrantes.length
+        ? `Fuera: ${sobrantes.map(p => p.nombre).join(', ')}`
         : '';
       drawRadar(teamA, teamB);
       const diffs = CARD_ATTRS.map((a, i) => {
@@ -1242,8 +2091,117 @@
     function fillTeamList(id, team) {
       document.getElementById(id).innerHTML = team.map(p => {
         const c = computeCard(p);
-        return `<li><span>${p.nombre} <small class="team-ovr">${formatPosiciones(p)}</small></span><span class="team-ovr">${c.media}</span></li>`;
+        return `<li><span>${escapeHtml(p.nombre)} <small class="team-ovr">${escapeHtml(formatPosiciones(p))}</small></span><span class="team-ovr">${c.media}</span></li>`;
       }).join('');
+    }
+
+    function registerCurrentMatch() {
+      if (!currentCombo || !currentSession) return;
+      currentMatch = RatingsService.createMatch({
+        format: teamSize,
+        teamClaro: currentCombo.teamA,
+        teamOscuro: currentCombo.teamB
+      });
+      renderMatchVoting(currentMatch);
+      document.getElementById('match-voting').classList.add('visible');
+      document.getElementById('match-voting').scrollIntoView({ behavior: 'smooth' });
+    }
+
+    function renderMatchVoting(match) {
+      const participants = [...match.teamClaro, ...match.teamOscuro];
+      const ownVotes = RatingsService.getMyMatchVotes(match.id, currentSession.username);
+      const list = document.getElementById('match-vote-list');
+
+      list.innerHTML = participants
+        .filter(name => !isCurrentUser(name))
+        .map(name => {
+          const player = players.find(item => AuthService.normalize(item.nombre) === AuthService.normalize(name));
+          const existing = ownVotes[AuthService.normalize(name)]?.score || 3;
+          return `<div class="match-player-row">
+            <div class="match-player-info">
+              <strong>${escapeHtml(name)}</strong>
+              <small>${escapeHtml(player ? formatPosiciones(player) : '')}</small>
+            </div>
+            ${[1, 2, 3, 4, 5].map(value => {
+              const trend = value < 3 ? 'down' : value === 3 ? 'flat' : 'up';
+              const arrow = value < 3 ? '↓' : value === 3 ? '→' : '↑';
+              return `<label class="performance-choice ${trend}">
+                <input type="radio" name="match_${escapeHtml(name)}" data-player="${escapeHtml(name)}" value="${value}" ${existing === value ? 'checked' : ''}>
+                <span>${arrow}${value}</span>
+              </label>`;
+            }).join('')}
+          </div>`;
+        }).join('');
+    }
+
+    function saveMatchVotes() {
+      if (!currentMatch || !currentSession) return;
+      const rows = document.querySelectorAll('#match-vote-list .match-player-row');
+      rows.forEach(row => {
+        const selected = row.querySelector('input[type=radio]:checked');
+        if (selected) {
+          RatingsService.saveMatchVote(
+            currentMatch.id,
+            currentSession.username,
+            selected.dataset.player,
+            Number(selected.value)
+          );
+        }
+      });
+      const status = document.getElementById('match-vote-status');
+      status.textContent = 'Votos guardados';
+      status.className = 'load-status';
+      renderNewspaper(currentMatch);
+      document.getElementById('newspaper-section').scrollIntoView({ behavior: 'smooth' });
+    }
+
+    function arrowFor(trend) {
+      if (trend === 'down') return '▼';
+      if (trend === 'up') return '▲';
+      return '●';
+    }
+
+    function renderNewspaper(match) {
+      const edition = RatingsService.buildNewspaper(match);
+      const section = document.getElementById('newspaper-section');
+      if (!edition) {
+        section.classList.remove('visible');
+        return;
+      }
+
+      const articles = edition.articles.map(article => `
+        <p class="paper-article"><strong>${escapeHtml(article.playerName)} (${article.average.toFixed(1)}).</strong> ${escapeHtml(article.text)}</p>
+      `).join('');
+      const ratings = edition.articles.map(article => `
+        <div class="paper-rating-row">
+          <span class="trend-${article.arrow}">${arrowFor(article.arrow)}</span>
+          <span>${escapeHtml(article.playerName)}</span>
+          <strong>${article.average.toFixed(1)}</strong>
+        </div>
+      `).join('');
+
+      document.getElementById('newspaper').innerHTML = `
+        <div class="paper-masthead">
+          <div class="paper-brand">El Tercer Tiempo</div>
+          <div class="paper-date">${escapeHtml(edition.kicker)}</div>
+        </div>
+        <div class="paper-kicker">Crónica de la fecha</div>
+        <h2 class="paper-headline">${escapeHtml(edition.headline)}</h2>
+        <p class="paper-deck">${escapeHtml(edition.deck)}</p>
+        <div class="paper-grid">
+          <div class="paper-lead">${articles}</div>
+          <aside class="paper-ratings">
+            <h4>El boletín</h4>
+            ${ratings}
+          </aside>
+        </div>`;
+      section.classList.add('visible');
+    }
+
+    function renderLatestNewspaper() {
+      const latest = RatingsService.listMatches()
+        .find(match => RatingsService.getMatchResults(match.id).length);
+      if (latest) renderNewspaper(latest);
     }
 
     function drawRadar(teamA, teamB) {

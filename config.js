@@ -26,11 +26,11 @@ const APP_CONFIG = {
 const STAT_FIELDS = [
   'vel_fis', 'resistencia', 'fuerza',
   'regate', 'pase_corto', 'pase_largo', 'posicionamiento', 'remate',
-  'marca',
-  'atajar', 'reflejos', 'salidas'
+  'marca', 'arquero'
 ];
 
 const STORAGE_KEYS = {
   roster: '3ertiempo_roster',
-  fotos: '3ertiempo_fotos'
+  fotos: '3ertiempo_fotos',
+  selection: '3ertiempo_match_selection_v1'
 };

@@ -6,6 +6,15 @@
  *   POST   /v1/players              → crear jugador
  *   PUT    /v1/players/:id          → actualizar (id = slug del nombre)
  *   POST   /v1/players/:id/foto     → { imageBase64, mimeType } → { ok, foto_url }
+ *
+ * Autenticación (ver auth.js):
+ *   POST /v1/auth/status
+ *   POST /v1/auth/register
+ *   POST /v1/auth/login
+ *   POST /v1/auth/logout
+ *
+ * El backend deberá validar que solo el dueño modifique datos personales y
+ * rechazar valoraciones donde rater_user_id === rated_player.user_id.
  */
 const PlayerApi = (() => {
   const PLACEHOLDER = 'TU_ID_AQUI';
@@ -147,7 +156,7 @@ const PlayerApi = (() => {
     },
 
     async listPlayers() {
-      const res = await fetch(`${this.base()}/v1/players`);
+      const res = await fetch(`${this.base()}/v1/players`, { credentials: 'include' });
       const data = await res.json();
       if (!data.ok || !Array.isArray(data.players)) throw new Error('Respuesta inválida');
       return {
@@ -163,6 +172,7 @@ const PlayerApi = (() => {
         : `${this.base()}/v1/players/${this.slug(player.nombre)}`;
       const res = await fetch(url, {
         method: create ? 'POST' : 'PUT',
+        credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(player)
       });
@@ -174,6 +184,7 @@ const PlayerApi = (() => {
     async uploadPhoto(nombre, photo) {
       const res = await fetch(`${this.base()}/v1/players/${this.slug(nombre)}/foto`, {
         method: 'POST',
+        credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           imageBase64: photo.base64,
@@ -209,17 +220,7 @@ const PlayerApi = (() => {
     },
 
     async savePlayer(player, options) {
-      try {
-        return await adapter().savePlayer(player, options);
-      } catch (err) {
-        if (activeProvider() === 'google') {
-          await postJson(APP_CONFIG.googleScriptUrl, options.create
-            ? { ...player, action: 'create' }
-            : player, { mode: 'no-cors' });
-          return { ok: true, fallback: true };
-        }
-        throw err;
-      }
+      return adapter().savePlayer(player, options);
     },
 
     async uploadPhoto(nombre, photo) {
