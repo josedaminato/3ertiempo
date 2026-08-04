@@ -8,7 +8,8 @@ const RatingsService = (() => {
   const PEER_KEY = '3ertiempo_peer_ratings_v1';
   const MATCHES_KEY = '3ertiempo_matches_v1';
   const MATCH_VOTES_KEY = '3ertiempo_match_votes_v1';
-  const CARD_KEYS = ['velocidad', 'tiro', 'pase', 'regate', 'defensa', 'fisico', 'portero'];
+  const CARD_KEYS = ['velocidad', 'tiro', 'pase', 'regate', 'defensa', 'fisico'];
+  const MIN_VOTES_FOR_NEWSPAPER = 6;
 
   function normalize(value) {
     return String(value || '').trim().toLocaleLowerCase('es');
@@ -102,6 +103,15 @@ const RatingsService = (() => {
     return read(MATCH_VOTES_KEY, {})[matchId]?.[normalize(rater)] || {};
   }
 
+  function getMatchVoteCount(matchId) {
+    const matchVotes = read(MATCH_VOTES_KEY, {})[matchId] || {};
+    let count = 0;
+    Object.values(matchVotes).forEach(raterVotes => {
+      count += Object.keys(raterVotes).length;
+    });
+    return count;
+  }
+
   function getMatchResults(matchId) {
     const matchVotes = read(MATCH_VOTES_KEY, {})[matchId] || {};
     const byPlayer = {};
@@ -171,6 +181,8 @@ const RatingsService = (() => {
   }
 
   function buildNewspaper(match) {
+    const voteCount = getMatchVoteCount(match.id);
+    if (voteCount < MIN_VOTES_FOR_NEWSPAPER) return null;
     const results = getMatchResults(match.id);
     if (!results.length) return null;
     const top = results[0];
@@ -197,6 +209,7 @@ const RatingsService = (() => {
 
   return {
     cardKeys: CARD_KEYS,
+    minVotesForNewspaper: MIN_VOTES_FOR_NEWSPAPER,
     savePeerRating,
     getMyPeerRating,
     getPeerAverage,
@@ -205,6 +218,7 @@ const RatingsService = (() => {
     getMatch,
     saveMatchVote,
     getMyMatchVotes,
+    getMatchVoteCount,
     getMatchResults,
     buildNewspaper
   };

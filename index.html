@@ -414,6 +414,28 @@
       text-transform: uppercase;
     }
 
+    .fifa-gk-badge {
+      position: absolute;
+      left: 0.45rem;
+      top: 50%;
+      transform: translateY(-50%);
+      z-index: 4;
+      display: grid;
+      place-items: center;
+      width: 1.55rem;
+      height: 1.55rem;
+      border-radius: 50%;
+      background: rgba(26, 39, 68, 0.82);
+      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
+      pointer-events: none;
+    }
+
+    .fifa-gk-badge svg {
+      width: 0.95rem;
+      height: 0.95rem;
+      fill: #f5e6a8;
+    }
+
     .fifa-card-action {
       margin-top: 0.2rem;
       text-align: center;
@@ -1093,7 +1115,7 @@
         <h2>Votación postpartido</h2>
         <span class="load-status" id="match-vote-status"></span>
       </div>
-      <p class="peer-note">Calificá del 1 al 5. Tu propio nombre no aparece: nadie puede votarse a sí mismo.</p>
+      <p class="peer-note">Calificá del 1 al 5. Tu propio nombre no aparece: nadie puede votarse a sí mismo. El periódico se publica con al menos 6 votos.</p>
       <div id="match-vote-list"></div>
       <button class="btn-primary" id="btn-save-match-votes" type="button" style="width:100%;margin-top:1rem">Guardar votos y publicar periódico</button>
     </section>
@@ -1126,7 +1148,7 @@
         <button class="modal-close" id="peer-modal-close" aria-label="Cerrar">&times;</button>
       </div>
       <div class="modal-preview" id="peer-modal-preview"></div>
-      <p class="peer-note">Tu voto se promedia con el de los demás. No modifica los datos personales del jugador.</p>
+      <p class="peer-note">Calificá del 1 al 5 los atributos de campo. El arquero lo define cada jugador en su perfil.</p>
       <form class="peer-form-grid" id="peer-rating-form"></form>
       <div class="modal-footer">
         <button type="button" class="btn-save" id="btn-save-peer-rating">Guardar valoración</button>
@@ -1154,6 +1176,34 @@
 
     const ITERATIONS = 600;
     const TOP_N = 5;
+    const GK_MIN_RATING = 3;
+
+    const OUTFIELD_FORMATIONS = {
+      4: [
+        { def: 1, med: 2, del: 1 },
+        { def: 2, med: 1, del: 1 },
+        { def: 1, med: 1, del: 2 }
+      ],
+      6: [
+        { def: 2, med: 3, del: 1 },
+        { def: 2, med: 2, del: 2 },
+        { def: 3, med: 2, del: 1 },
+        { def: 3, med: 1, del: 2 },
+        { def: 1, med: 3, del: 2 }
+      ],
+      8: [
+        { def: 3, med: 3, del: 2 },
+        { def: 3, med: 2, del: 3 },
+        { def: 4, med: 2, del: 2 },
+        { def: 2, med: 4, del: 2 }
+      ],
+      10: [
+        { def: 4, med: 3, del: 3 },
+        { def: 3, med: 4, del: 3 },
+        { def: 4, med: 4, del: 2 },
+        { def: 3, med: 3, del: 4 }
+      ]
+    };
 
     let players = [];
     let teamSize = 7;
@@ -1326,19 +1376,40 @@
         pase: avg(Number(p.pase_corto) || 3, Number(p.pase_largo) || 3),
         regate: Number(p.regate) || 3,
         defensa: avg(Number(p.marca) || 3, Number(p.posicionamiento) || 3),
-        fisico: avg(Number(p.resistencia) || 3, Number(p.fuerza) || 3),
-        portero: Number(p.arquero) || 3
+        fisico: avg(
+          Number(p.vel_fis) || 3,
+          Number(p.resistencia) || 3,
+          Number(p.fuerza) || 3
+        )
       };
+    }
+
+    function goalkeeperRating(p) {
+      return roundStat(Number(p.arquero) || 1);
+    }
+
+    function isGoalkeeperCapable(p) {
+      return goalkeeperRating(p) >= GK_MIN_RATING;
+    }
+
+    function glovesBadgeHtml(p) {
+      if (!isGoalkeeperCapable(p)) return '';
+      return `<span class="fifa-gk-badge" title="Arquero ${goalkeeperRating(p)}/5" aria-label="Arquero aceptable">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M7 4c-1.5 1.2-2.3 3-2.3 5.1V14c0 2.2 1.8 4 4 4h.4c.4-1.3 1.5-2.3 2.9-2.3s2.5 1 2.9 2.3H15c2.2 0 4-1.8 4-4V9.1C19 7 18.2 5.2 16.7 4H15v3.5c0 .8-.7 1.5-1.5 1.5S12 8.3 12 7.5V4h-2v3.5c0 .8-.7 1.5-1.5 1.5S7 8.3 7 7.5V4z"/>
+        </svg>
+      </span>`;
     }
 
     function computeCard(p) {
       const base = computeBaseCard(p);
       const peer = RatingsService.getPeerAverage(p.nombre);
-      const source = peer.count ? peer.stats : base;
-      const cardStats = CARD_ATTRS.map(key => source[key]);
+      const fieldStats = peer.count ? { ...base, ...peer.stats } : base;
+      const cardStats = CARD_ATTRS.map(key => fieldStats[key]);
       const media = Math.round(avg(...cardStats) * 20);
       return {
-        ...source,
+        ...fieldStats,
+        portero: goalkeeperRating(p),
         media,
         cardStats,
         ratingCount: peer.count,
@@ -1353,19 +1424,13 @@
     }
 
     function formatPosiciones(p) {
-      const parts = [p.posicion_1, p.posicion_2].filter(Boolean);
-      if (p.juega_arco) parts.push('ARQ');
-      return parts.join(' · ');
+      return [p.posicion_1, p.posicion_2].filter(Boolean).join(' · ');
     }
 
     function posicionesCardHtml(p) {
-      const arq = p.juega_arco
-        ? '<span class="fifa-pos-arq">ARQ</span>'
-        : '';
       return `<div class="fifa-pos-wrap">
         <span class="fifa-pos-main">${escapeHtml(p.posicion_1 || 'MED')}</span>
         <span class="fifa-pos-sub">${escapeHtml(p.posicion_2 || 'DEL')}</span>
-        ${arq}
       </div>`;
     }
 
@@ -1388,6 +1453,7 @@
         <div class="fifa-card ${cls} ${selected ? 'selected' : ''}" ${clickable ? '' : ''}>
           ${selectionButton}
           ${selfBadge}
+          ${glovesBadgeHtml(p)}
           ${photoHtml}
           <div class="fifa-card-body">
             ${peerBadge}
@@ -1633,7 +1699,10 @@
         out.posicion_1 = p.posicion_1 || out.posicion_1;
         out.posicion_2 = p.posicion_2 || out.posicion_2;
       }
-      out.juega_arco = p.juega_arco !== false && p.juega_arco !== 0 && p.juega_arco !== '0';
+      out.juega_arco = roundStat(
+        Number(p.arquero) ||
+        avg(Number(p.atajar) || 3, Number(p.reflejos) || 3, Number(p.salidas) || 3)
+      ) >= GK_MIN_RATING;
       out.edad = Number(p.edad) || out.edad;
       out.altura = Number(p.altura) || out.altura;
       out.pie_habil = p.pie_habil || out.pie_habil;
@@ -1725,6 +1794,7 @@
         </div>
         <div class="form-section">
           <h4>Posiciones</h4>
+          <p class="peer-note">Elegí los dos puestos donde jugás en cancha. Solo vos podés cambiarlos.</p>
           <div class="form-grid">
             <div class="field">
               <label>Puesto 1</label>
@@ -1737,13 +1807,17 @@
                 `<option ${p.posicion_2 === x ? 'selected' : ''}>${x}</option>`).join('')}</select>
             </div>
           </div>
-          <label class="field-check">
-            <input type="checkbox" name="juega_arco" ${p.juega_arco !== false ? 'checked' : ''}>
-            También juega de arquero (rotación en el arco)
-          </label>
+        </div>
+        <div class="form-section">
+          <h4>Arquero</h4>
+          <p class="peer-note">Atributo propio, aparte de las valoraciones de los demás. Con 3 a 5 aparecen guantes en tu carta.</p>
+          <div class="field">
+            <label>Nivel de arquero (1–5)</label>
+            <input type="number" name="arquero" min="1" max="5" step="1" value="${goalkeeperRating(p)}">
+          </div>
         </div>
         <div class="peer-note">
-          Los atributos de la carta no se autoeditan. Arrancan con valor base 3 y se reemplazan por el promedio de las valoraciones de los demás jugadores.
+          Los atributos de campo no se autoeditan. Arrancan con valor base 3 y se reemplazan por el promedio de las valoraciones de los demás jugadores.
         </div>`;
     }
 
@@ -1824,7 +1898,8 @@
       base.pie_habil = form.querySelector('[name=pie_habil]').value;
       base.posicion_1 = form.querySelector('[name=posicion_1]').value;
       base.posicion_2 = form.querySelector('[name=posicion_2]').value;
-      base.juega_arco = form.querySelector('[name=juega_arco]').checked;
+      base.arquero = roundStat(Number(form.querySelector('[name=arquero]')?.value) || base.arquero || 3);
+      base.juega_arco = base.arquero >= GK_MIN_RATING;
       base.foto_url = String(form.querySelector('[name=foto_url]')?.value || '').trim();
       if (pendingPhoto) base.foto_url = pendingPhoto.dataUrl;
       STAT_FIELDS.forEach(f => {
@@ -1863,8 +1938,7 @@
       pase: 'Pase',
       regate: 'Regate',
       defensa: 'Defensa',
-      fisico: 'Físico',
-      portero: 'Arquero'
+      fisico: 'Físico'
     };
 
     function openPeerRating(idx) {
@@ -1993,6 +2067,102 @@
       updateModalPreview();
     }
 
+    function playerPlaysRole(p, role) {
+      const positions = [p.posicion_1, p.posicion_2];
+      if (role === 'DEF') return positions.some(pos => pos === 'DEF' || pos === 'LIB');
+      if (role === 'MED') return positions.some(pos => pos === 'MED');
+      if (role === 'DEL') return positions.some(pos => pos === 'DEL');
+      return false;
+    }
+
+    function formationsForTeamSize(size) {
+      return OUTFIELD_FORMATIONS[size - 1] || OUTFIELD_FORMATIONS[6];
+    }
+
+    function matchFormationPenalty(outfieldPlayers, formation) {
+      const slots = [
+        ...Array(formation.def).fill('DEF'),
+        ...Array(formation.med).fill('MED'),
+        ...Array(formation.del).fill('DEL')
+      ];
+      const used = new Set();
+      let penalty = 0;
+
+      slots.forEach(slot => {
+        const idx = outfieldPlayers.findIndex((player, index) =>
+          !used.has(index) && playerPlaysRole(player, slot)
+        );
+        if (idx >= 0) {
+          used.add(idx);
+          return;
+        }
+        const fallbackIdx = outfieldPlayers.findIndex((_, index) => !used.has(index));
+        if (fallbackIdx >= 0) {
+          used.add(fallbackIdx);
+          penalty += 14;
+        } else {
+          penalty += 24;
+        }
+      });
+
+      return penalty;
+    }
+
+    function bestTeamFormation(team) {
+      const gkCandidates = team
+        .filter(isGoalkeeperCapable)
+        .sort((a, b) => goalkeeperRating(b) - goalkeeperRating(a));
+      const formations = formationsForTeamSize(team.length);
+      let best = { penalty: Infinity, gk: null, formation: null, roles: {} };
+
+      if (!gkCandidates.length) {
+        return { penalty: 90, gk: null, formation: null, roles: {} };
+      }
+
+      gkCandidates.slice(0, 3).forEach(gk => {
+        const outfield = team.filter(player => player !== gk);
+        formations.forEach(formation => {
+          const penalty = matchFormationPenalty(outfield, formation);
+          if (penalty < best.penalty) {
+            best = { penalty, gk, formation, roles: assignTeamRoles(team, gk, formation) };
+          }
+        });
+      });
+
+      return best;
+    }
+
+    function assignTeamRoles(team, gk, formation) {
+      const roles = {};
+      roles[selectionKey(gk)] = 'ARQ';
+      const outfield = team.filter(player => player !== gk);
+      const slots = [
+        ...Array(formation.def).fill('DEF'),
+        ...Array(formation.med).fill('MED'),
+        ...Array(formation.del).fill('DEL')
+      ];
+      const used = new Set();
+
+      slots.forEach(slot => {
+        let idx = outfield.findIndex((player, index) =>
+          !used.has(index) && playerPlaysRole(player, slot)
+        );
+        if (idx < 0) {
+          idx = outfield.findIndex((_, index) => !used.has(index));
+        }
+        if (idx >= 0) {
+          used.add(idx);
+          roles[selectionKey(outfield[idx])] = slot;
+        }
+      });
+
+      return roles;
+    }
+
+    function teamFormationPenalty(team) {
+      return bestTeamFormation(team).penalty;
+    }
+
     function getBalanceValue(p, attr) {
       return computeCard(p)[attr];
     }
@@ -2017,17 +2187,14 @@
         cost += Math.abs(teamAverage(teamA, attr) - teamAverage(teamB, attr)) * BALANCE_WEIGHTS[attr];
       }
 
-      const goalkeepersA = teamA.filter(player => player.juega_arco);
-      const goalkeepersB = teamB.filter(player => player.juega_arco);
-      const totalGoalkeepers = goalkeepersA.length + goalkeepersB.length;
-      if (totalGoalkeepers >= 2 && (!goalkeepersA.length || !goalkeepersB.length)) {
-        cost += 50;
+      cost += teamFormationPenalty(teamA) + teamFormationPenalty(teamB);
+
+      const gkA = bestTeamFormation(teamA).gk;
+      const gkB = bestTeamFormation(teamB).gk;
+      if (gkA && gkB) {
+        cost += Math.abs(goalkeeperRating(gkA) - goalkeeperRating(gkB)) * 0.8;
       }
-      if (goalkeepersA.length && goalkeepersB.length) {
-        const strengthA = Math.max(...goalkeepersA.map(player => computeCard(player).portero));
-        const strengthB = Math.max(...goalkeepersB.map(player => computeCard(player).portero));
-        cost += Math.abs(strengthA - strengthB) * 0.8;
-      }
+
       return cost;
     }
 
@@ -2073,8 +2240,10 @@
     }
 
     function renderResults({ teamA, teamB, sobrantes, cost }) {
-      fillTeamList('team-claro-list', teamA);
-      fillTeamList('team-oscuro-list', teamB);
+      const planA = bestTeamFormation(teamA);
+      const planB = bestTeamFormation(teamB);
+      fillTeamList('team-claro-list', teamA, planA.roles);
+      fillTeamList('team-oscuro-list', teamB, planB.roles);
       const sobEl = document.getElementById('sobrantes-info');
       sobEl.textContent = sobrantes.length
         ? `Fuera: ${sobrantes.map(p => p.nombre).join(', ')}`
@@ -2084,14 +2253,18 @@
         const d = Math.abs(teamAverage(teamA, a) - teamAverage(teamB, a)).toFixed(2);
         return `${CARD_LABELS_FULL[i]}: ${d}`;
       });
+      const formA = planA.formation ? `${planA.formation.def}-${planA.formation.med}-${planA.formation.del}` : '—';
+      const formB = planB.formation ? `${planB.formation.def}-${planB.formation.med}-${planB.formation.del}` : '—';
       document.getElementById('cost-info').textContent =
-        `Costo: ${cost.toFixed(3)} · ${diffs.join(' · ')} · Portero: ${Math.abs(teamAverage(teamA, 'portero') - teamAverage(teamB, 'portero')).toFixed(2)}`;
+        `Costo: ${cost.toFixed(3)} · Formación Claro ${formA} · Oscuro ${formB} · ${diffs.join(' · ')} · Arquero: ${Math.abs((planA.gk ? goalkeeperRating(planA.gk) : 0) - (planB.gk ? goalkeeperRating(planB.gk) : 0)).toFixed(2)}`;
     }
 
-    function fillTeamList(id, team) {
+    function fillTeamList(id, team, roles = {}) {
       document.getElementById(id).innerHTML = team.map(p => {
         const c = computeCard(p);
-        return `<li><span>${escapeHtml(p.nombre)} <small class="team-ovr">${escapeHtml(formatPosiciones(p))}</small></span><span class="team-ovr">${c.media}</span></li>`;
+        const role = roles[selectionKey(p)] || '';
+        const roleLabel = role ? `${role} · ` : '';
+        return `<li><span>${escapeHtml(p.nombre)} <small class="team-ovr">${escapeHtml(roleLabel)}${escapeHtml(formatPosiciones(p))}</small></span><span class="team-ovr">${c.media}</span></li>`;
       }).join('');
     }
 
@@ -2149,10 +2322,18 @@
         }
       });
       const status = document.getElementById('match-vote-status');
-      status.textContent = 'Votos guardados';
+      const voteCount = RatingsService.getMatchVoteCount(currentMatch.id);
+      const minVotes = RatingsService.minVotesForNewspaper;
       status.className = 'load-status';
-      renderNewspaper(currentMatch);
-      document.getElementById('newspaper-section').scrollIntoView({ behavior: 'smooth' });
+
+      if (voteCount >= minVotes) {
+        status.textContent = `Votos guardados · Periódico publicado (${voteCount} votos)`;
+        renderNewspaper(currentMatch);
+        document.getElementById('newspaper-section').scrollIntoView({ behavior: 'smooth' });
+      } else {
+        status.textContent = `Votos guardados · Faltan ${minVotes - voteCount} votos para publicar el periódico (${voteCount}/${minVotes})`;
+        renderNewspaper(currentMatch);
+      }
     }
 
     function arrowFor(trend) {
@@ -2164,8 +2345,22 @@
     function renderNewspaper(match) {
       const edition = RatingsService.buildNewspaper(match);
       const section = document.getElementById('newspaper-section');
+      const newspaper = document.getElementById('newspaper');
+      const minVotes = RatingsService.minVotesForNewspaper;
+      const voteCount = RatingsService.getMatchVoteCount(match.id);
+
       if (!edition) {
-        section.classList.remove('visible');
+        if (voteCount > 0) {
+          newspaper.innerHTML = `
+            <div class="paper-masthead">
+              <div class="paper-brand">El Tercer Tiempo</div>
+              <div class="paper-date">Edición en preparación</div>
+            </div>
+            <p class="paper-deck">Periódico pendiente: ${voteCount}/${minVotes} votos registrados.</p>`;
+          section.classList.add('visible');
+        } else {
+          section.classList.remove('visible');
+        }
         return;
       }
 
@@ -2199,9 +2394,15 @@
     }
 
     function renderLatestNewspaper() {
-      const latest = RatingsService.listMatches()
-        .find(match => RatingsService.getMatchResults(match.id).length);
-      if (latest) renderNewspaper(latest);
+      const section = document.getElementById('newspaper-section');
+      const latest = RatingsService.listMatches().find(match =>
+        RatingsService.getMatchVoteCount(match.id) > 0
+      );
+      if (!latest) {
+        section.classList.remove('visible');
+        return;
+      }
+      renderNewspaper(latest);
     }
 
     function drawRadar(teamA, teamB) {
