@@ -137,6 +137,23 @@
       cursor: pointer;
     }
 
+    .login-form input[type="password"],
+    .login-form input.login-pin {
+      font-family: 'Consolas', 'Courier New', monospace;
+      font-size: 1.35rem;
+      letter-spacing: 0.35em;
+      text-align: center;
+    }
+
+    .login-hint {
+      min-height: 2.4rem;
+      color: var(--text-muted);
+      font-size: 0.78rem;
+      line-height: 1.35;
+    }
+
+    .login-hint.register { color: var(--success); }
+
     .login-message { min-height: 1.2rem; color: var(--text-muted); font-size: 0.78rem; }
     .login-message.error { color: var(--error); }
     .prototype-note { margin-top: 0.8rem; color: var(--warning); font-size: 0.68rem; }
@@ -1042,22 +1059,23 @@
     <div class="login-card">
       <div class="login-ball">⚽</div>
       <h2>3er Tiempo</h2>
-      <p class="login-copy">Elegí tu jugador. Tu nombre es tu usuario y vos definís la contraseña.</p>
+      <p class="login-copy">Cada jugador es un usuario. Elegí tu nombre y creá una contraseña de <strong>6 números</strong>. Queda guardada para que ingreses cuando quieras.</p>
       <form class="login-form" id="login-form">
         <label>
-          Jugador
+          Tu jugador
           <select id="login-player" required>
             <option value="">Elegí tu nombre</option>
           </select>
         </label>
         <label>
-          Contraseña
-          <input id="login-password" type="password" minlength="6" autocomplete="current-password" required>
+          Contraseña (6 números)
+          <input id="login-password" class="login-pin" type="password" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" minlength="6" autocomplete="current-password" placeholder="••••••" required>
         </label>
+        <p class="login-hint" id="login-hint">Elegí tu jugador para continuar.</p>
         <button class="login-submit" id="login-submit" type="submit">Ingresar</button>
         <p class="login-message" id="login-message"></p>
       </form>
-      <p class="prototype-note">Prototipo local: las cuentas de prueba viven solo en este dispositivo. El backend real protegerá las contraseñas.</p>
+      <p class="prototype-note">Las cuentas se guardan en este dispositivo. Cerrá sesión para cambiar de jugador.</p>
     </div>
   </div>
 
@@ -1557,17 +1575,28 @@
     function populateLoginPlayers() {
       const select = document.getElementById('login-player');
       select.innerHTML = '<option value="">Elegí tu nombre</option>' +
-        players.map(player =>
-          `<option value="${escapeHtml(player.nombre)}">${escapeHtml(player.nombre)}</option>`
-        ).join('');
+        players.map(player => {
+          const registered = AuthService.isRegisteredSync(player.nombre);
+          const suffix = registered ? ' ✓' : '';
+          return `<option value="${escapeHtml(player.nombre)}">${escapeHtml(player.nombre)}${suffix}</option>`;
+        }).join('');
+    }
+
+    function bindLoginPasswordInput() {
+      const input = document.getElementById('login-password');
+      input.addEventListener('input', () => {
+        input.value = input.value.replace(/\D/g, '').slice(0, AuthService.passwordLength);
+      });
     }
 
     function initAuth() {
       populateLoginPlayers();
+      bindLoginPasswordInput();
       currentSession = AuthService.getSession();
       if (currentSession && players.some(player => isCurrentUser(player))) {
         showAppSession();
       } else {
+        if (currentSession) AuthService.logout();
         currentSession = null;
         document.getElementById('login-overlay').classList.remove('hidden');
       }
@@ -1576,21 +1605,37 @@
       const playerSelect = document.getElementById('login-player');
       playerSelect.addEventListener('change', updateLoginMode);
       form.addEventListener('submit', handleLoginSubmit);
+      updateLoginMode();
     }
 
     async function updateLoginMode() {
       const username = document.getElementById('login-player').value;
       const button = document.getElementById('login-submit');
       const message = document.getElementById('login-message');
+      const hint = document.getElementById('login-hint');
+      const passwordInput = document.getElementById('login-password');
       message.textContent = '';
       message.className = 'login-message';
+      passwordInput.value = '';
+
       if (!username) {
         button.textContent = 'Ingresar';
+        hint.textContent = 'Elegí tu jugador para continuar.';
+        hint.className = 'login-hint';
         return;
       }
-      button.textContent = await AuthService.isRegistered(username)
-        ? 'Ingresar'
-        : 'Crear contraseña';
+
+      const registered = await AuthService.isRegistered(username);
+      if (registered) {
+        button.textContent = 'Ingresar';
+        hint.textContent = 'Ya tenés cuenta. Ingresá tus 6 números.';
+        hint.className = 'login-hint';
+      } else {
+        button.textContent = 'Crear mi contraseña';
+        hint.textContent = 'Primera vez: elegí 6 números. Quedan guardados para la próxima.';
+        hint.className = 'login-hint register';
+      }
+      passwordInput.focus();
     }
 
     async function handleLoginSubmit(event) {
@@ -1599,6 +1644,12 @@
       const password = document.getElementById('login-password').value;
       const message = document.getElementById('login-message');
       const button = document.getElementById('login-submit');
+
+      if (!AuthService.isValidPasswordFormat(password)) {
+        message.textContent = `La contraseña debe tener ${AuthService.passwordLength} números`;
+        message.className = 'login-message error';
+        return;
+      }
 
       message.textContent = 'Verificando…';
       message.className = 'login-message';
@@ -1609,6 +1660,7 @@
           ? await AuthService.login(username, password)
           : await AuthService.register(username, password);
         document.getElementById('login-password').value = '';
+        populateLoginPlayers();
         showAppSession();
       } catch (error) {
         message.textContent = error.message;
