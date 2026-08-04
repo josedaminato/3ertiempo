@@ -1,0 +1,3900 @@
+﻿================================================================================
+ 3er TIEMPO — CODIGO COMPLETO DEL PROYECTO
+ Generado: 2026-08-03 22:33
+ Repo: https://github.com/josedaminato/3ertiempo
+ App: https://josedaminato.github.io/3ertiempo/
+================================================================================
+
+COMO USAR ESTE ARCHIVO
+- Cada seccion empieza con ===== ARCHIVO: nombre =====
+- Para ejecutar localmente: copia los archivos a una carpeta con la misma estructura
+- Abri index.html con un servidor local (python -m http.server 8765)
+
+ESTRUCTURA DEL PROYECTO
+  index.html          Interfaz (HTML + CSS + JS principal)
+  config.js           Configuracion
+  api.js              Datos de jugadores
+  auth.js             Login por jugador (6 digitos)
+  ratings.js          Valoraciones, partidos y periodico
+  Code.gs             Google Apps Script (Google Sheets)
+  jugadores.csv       Plantilla inicial
+
+
+
+================================================================================
+ ARCHIVO: README.md
+================================================================================
+
+# 3er Tiempo
+
+App web para armar equipos de fútbol parejos entre amigos: cartas estilo FIFA, convocatoria del jueves, balanceo automático y crónica postpartido.
+
+## Ver la app
+
+**Link de la interfaz (GitHub Pages):**
+
+**https://josedaminato.github.io/3ertiempo/**
+
+> El link del repositorio (`github.com/josedaminato/3ertiempo`) muestra el código, no la app. Para usar la interfaz abrí el link de arriba.
+
+## Uso rápido
+
+1. Elegí tu nombre y creá tu contraseña (primera vez) o ingresá.
+2. Marcá con `+` los 14 jugadores confirmados para Fútbol 7.
+3. Tocá **Armar equipos parejos**.
+4. Después del partido, registrá el encuentro y votá para generar la crónica.
+
+## Desarrollo local
+
+```bash
+python -m http.server 8765
+```
+
+Abrí http://localhost:8765/index.html
+
+## Archivos
+
+| Archivo | Descripción |
+|---------|-------------|
+| `index.html` | Interfaz completa |
+| `config.js` | Configuración (provider, URLs) |
+| `api.js` | Capa de datos |
+| `auth.js` | Autenticación (prototipo local) |
+| `ratings.js` | Evaluaciones y periódico |
+| `Code.gs` | Backend Google Sheets / Apps Script |
+| `jugadores.csv` | Plantilla inicial |
+
+## GitHub Pages
+
+Si el link de arriba da 404:
+
+1. Repo → **Settings** → **Pages**
+2. **Build and deployment** → Source: **Deploy from a branch**
+3. Branch: **main** → Folder: **/ (root)** → Save
+4. Esperá 1–2 minutos y recargá
+
+## Google Sheets (opcional)
+
+Para sincronizar con una planilla, desplegá `Code.gs` como Apps Script y poné la URL en `config.js`:
+
+```js
+googleScriptUrl: 'https://script.google.com/macros/s/TU_ID/exec'
+```
+
+Sin URL configurada, la app funciona en modo local con los jugadores por defecto.
+
+
+
+================================================================================
+ ARCHIVO: config.js
+================================================================================
+
+/**
+ * Configuración de 3er tiempo
+ *
+ * provider:
+ *   'google' — Google Sheets + Apps Script (temporal, hasta tener backend)
+ *   'api'    — Backend propio en api.3ertiempo.online (futuro)
+ *   'local'  — Solo este dispositivo (desarrollo / pruebas)
+ */
+const APP_CONFIG = {
+  provider: 'google',
+
+  googleScriptUrl: 'https://script.google.com/macros/s/TU_ID_AQUI/exec',
+
+  /** Base URL del backend futuro (sin barra final) */
+  apiBaseUrl: 'https://api.3ertiempo.online',
+
+  /** Nombres iniciales si no hay datos remotos ni guardados localmente */
+  defaultPlayerNames: [
+    'Marcelo', 'Maxi', 'Turco', 'Gato', 'Mariano', 'Charly', 'Gonza', 'Ariel',
+    'Claudio', 'Cacho', 'Jorge', 'Jose', 'Claudio M', 'Seba', 'Marcos',
+    'Juampi', 'Chifi', 'Matías',
+    'Pablo', 'Fer', 'Tasla', 'Franco', 'Javi'
+  ]
+};
+
+const STAT_FIELDS = [
+  'vel_fis', 'resistencia', 'fuerza',
+  'regate', 'pase_corto', 'pase_largo', 'posicionamiento', 'remate',
+  'marca', 'arquero'
+];
+
+const STORAGE_KEYS = {
+  roster: '3ertiempo_roster',
+  fotos: '3ertiempo_fotos',
+  selection: '3ertiempo_match_selection_v1'
+};
+
+
+
+================================================================================
+ ARCHIVO: api.js
+================================================================================
+
+/**
+ * Capa de datos de 3er tiempo
+ *
+ * Contrato futuro del backend (provider: 'api'):
+ *   GET    /v1/players              → { ok, players: Player[] }
+ *   POST   /v1/players              → crear jugador
+ *   PUT    /v1/players/:id          → actualizar (id = slug del nombre)
+ *   POST   /v1/players/:id/foto     → { imageBase64, mimeType } → { ok, foto_url }
+ *
+ * Autenticación (ver auth.js):
+ *   POST /v1/auth/status
+ *   POST /v1/auth/register
+ *   POST /v1/auth/login
+ *   POST /v1/auth/logout
+ *
+ * El backend deberá validar que solo el dueño modifique datos personales y
+ * rechazar valoraciones donde rater_user_id === rated_player.user_id.
+ */
+const PlayerApi = (() => {
+  const PLACEHOLDER = 'TU_ID_AQUI';
+
+  function activeProvider() {
+    const p = APP_CONFIG.provider;
+    if (p === 'local') return 'local';
+    if (p === 'api') return 'api';
+    if (p === 'google') {
+      return APP_CONFIG.googleScriptUrl.includes(PLACEHOLDER) ? 'local' : 'google';
+    }
+    return 'local';
+  }
+
+  function defaultPlayer(nombre) {
+    const p = {
+      nombre,
+      posicion_1: 'MED',
+      posicion_2: 'DEL',
+      juega_arco: true,
+      edad: 30,
+      altura: 175,
+      pie_habil: 'Derecho',
+      foto_url: ''
+    };
+    STAT_FIELDS.forEach(f => { p[f] = 3; });
+    p.arquero = 1;
+    p.juega_arco = false;
+    return p;
+  }
+
+  function readJson(key, fallback) {
+    try {
+      const raw = localStorage.getItem(key);
+      return raw ? JSON.parse(raw) : fallback;
+    } catch {
+      return fallback;
+    }
+  }
+
+  function writeJson(key, value) {
+    localStorage.setItem(key, JSON.stringify(value));
+  }
+
+  function seedRoster() {
+    return APP_CONFIG.defaultPlayerNames.map(n => defaultPlayer(n));
+  }
+
+  async function postJson(url, body, options) {
+    const res = await fetch(url, {
+      method: 'POST',
+      redirect: 'follow',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify(body),
+      ...options
+    });
+    return res.json();
+  }
+
+  // ─── Local ───────────────────────────────────────────────────────────────
+
+  const local = {
+    async listPlayers() {
+      const roster = readJson(STORAGE_KEYS.roster, null);
+      const players = roster || seedRoster();
+      if (!roster) writeJson(STORAGE_KEYS.roster, players);
+      return {
+        players,
+        message: `${players.length} jugadores · modo local (este dispositivo)`,
+        offline: true
+      };
+    },
+
+    async savePlayer(player, { create }) {
+      const roster = readJson(STORAGE_KEYS.roster, seedRoster());
+      const idx = roster.findIndex(p =>
+        p.nombre.trim().toLowerCase() === player.nombre.trim().toLowerCase()
+      );
+      if (create) {
+        if (idx >= 0) throw new Error('Ya existe un jugador con ese nombre');
+        roster.push(player);
+      } else if (idx >= 0) {
+        roster[idx] = player;
+      } else {
+        throw new Error('Jugador no encontrado');
+      }
+      writeJson(STORAGE_KEYS.roster, roster);
+      return { ok: true };
+    },
+
+    async uploadPhoto(nombre, photo) {
+      const fotos = readJson(STORAGE_KEYS.fotos, {});
+      fotos[nombre] = photo.dataUrl;
+      writeJson(STORAGE_KEYS.fotos, fotos);
+      return photo.dataUrl;
+    }
+  };
+
+  // ─── Google Apps Script ──────────────────────────────────────────────────
+
+  const google = {
+    url: () => APP_CONFIG.googleScriptUrl,
+
+    async listPlayers() {
+      const res = await fetch(this.url());
+      const data = await res.json();
+      if (!data.ok || !Array.isArray(data.players)) throw new Error('Respuesta inválida');
+      return {
+        players: data.players,
+        message: `${data.players.length} jugadores cargados desde la planilla`,
+        offline: false
+      };
+    },
+
+    async savePlayer(player, { create }) {
+      const payload = create ? { ...player, action: 'create' } : player;
+      const result = await postJson(this.url(), payload);
+      if (!result.ok) throw new Error(result.error || 'Error al guardar');
+      return result;
+    },
+
+    async uploadPhoto(nombre, photo) {
+      const result = await postJson(this.url(), {
+        action: 'uploadFoto',
+        nombre,
+        imageBase64: photo.base64,
+        mimeType: photo.mimeType
+      });
+      if (!result.ok) throw new Error(result.error || 'Error al subir foto');
+      return result.foto_url;
+    }
+  };
+
+  // ─── REST API (futuro) ───────────────────────────────────────────────────
+
+  const api = {
+    base: () => APP_CONFIG.apiBaseUrl.replace(/\/$/, ''),
+
+    slug(nombre) {
+      return encodeURIComponent(nombre.trim());
+    },
+
+    async listPlayers() {
+      const res = await fetch(`${this.base()}/v1/players`, { credentials: 'include' });
+      const data = await res.json();
+      if (!data.ok || !Array.isArray(data.players)) throw new Error('Respuesta inválida');
+      return {
+        players: data.players,
+        message: `${data.players.length} jugadores sincronizados`,
+        offline: false
+      };
+    },
+
+    async savePlayer(player, { create }) {
+      const url = create
+        ? `${this.base()}/v1/players`
+        : `${this.base()}/v1/players/${this.slug(player.nombre)}`;
+      const res = await fetch(url, {
+        method: create ? 'POST' : 'PUT',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(player)
+      });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || 'Error al guardar');
+      return data;
+    },
+
+    async uploadPhoto(nombre, photo) {
+      const res = await fetch(`${this.base()}/v1/players/${this.slug(nombre)}/foto`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          imageBase64: photo.base64,
+          mimeType: photo.mimeType
+        })
+      });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || 'Error al subir foto');
+      return data.foto_url;
+    }
+  };
+
+  function adapter() {
+    const p = activeProvider();
+    if (p === 'google') return google;
+    if (p === 'api') return api;
+    return local;
+  }
+
+  return {
+    activeProvider,
+    isLocal: () => activeProvider() === 'local',
+
+    async listPlayers() {
+      try {
+        return await adapter().listPlayers();
+      } catch {
+        if (activeProvider() !== 'local') {
+          return local.listPlayers();
+        }
+        throw new Error('Sin conexión');
+      }
+    },
+
+    async savePlayer(player, options) {
+      return adapter().savePlayer(player, options);
+    },
+
+    async uploadPhoto(nombre, photo) {
+      return adapter().uploadPhoto(nombre, photo);
+    }
+  };
+})();
+
+
+
+================================================================================
+ ARCHIVO: auth.js
+================================================================================
+
+/**
+ * Autenticación de 3er tiempo.
+ *
+ * Cada jugador es un usuario con contraseña numérica de 6 dígitos.
+ * En modo local las cuentas viven en este dispositivo (hash + salt).
+ * En producción, provider="api" delega al backend real.
+ */
+const AuthService = (() => {
+  const USERS_KEY = '3ertiempo_users_v1';
+  const SESSION_KEY = '3ertiempo_session_v1';
+  const PASSWORD_LENGTH = 6;
+
+  function normalize(value) {
+    return String(value || '').trim().toLocaleLowerCase('es');
+  }
+
+  function validatePassword(password) {
+    const clean = String(password || '').trim();
+    if (!/^\d{6}$/.test(clean)) {
+      throw new Error(`La contraseña debe tener ${PASSWORD_LENGTH} números`);
+    }
+    return clean;
+  }
+
+  function isValidPasswordFormat(password) {
+    return /^\d{6}$/.test(String(password || '').trim());
+  }
+
+  function readUsers() {
+    try { return JSON.parse(localStorage.getItem(USERS_KEY) || '{}'); }
+    catch { return {}; }
+  }
+
+  function writeUsers(users) {
+    localStorage.setItem(USERS_KEY, JSON.stringify(users));
+  }
+
+  function bytesToHex(bytes) {
+    return Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('');
+  }
+
+  function randomSalt() {
+    const bytes = new Uint8Array(16);
+    crypto.getRandomValues(bytes);
+    return bytesToHex(bytes);
+  }
+
+  async function digest(password, salt) {
+    const input = new TextEncoder().encode(`${salt}:${password}`);
+    const hash = await crypto.subtle.digest('SHA-256', input);
+    return bytesToHex(new Uint8Array(hash));
+  }
+
+  function isApi() {
+    return APP_CONFIG.provider === 'api';
+  }
+
+  async function apiRequest(path, body) {
+    const res = await fetch(`${APP_CONFIG.apiBaseUrl.replace(/\/$/, '')}${path}`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    const data = await res.json();
+    if (!res.ok || !data.ok) throw new Error(data.error || 'No se pudo iniciar sesión');
+    return data;
+  }
+
+  function isRegisteredSync(username) {
+    if (!username) return false;
+    return Boolean(readUsers()[normalize(username)]);
+  }
+
+  function listRegisteredUsernames() {
+    return Object.values(readUsers()).map(account => account.username);
+  }
+
+  async function isRegistered(username) {
+    if (isApi()) {
+      const data = await apiRequest('/v1/auth/status', { username });
+      return Boolean(data.registered);
+    }
+    return isRegisteredSync(username);
+  }
+
+  async function register(username, password) {
+    const cleanName = String(username || '').trim();
+    if (!cleanName) throw new Error('Elegí tu jugador');
+    const cleanPassword = validatePassword(password);
+
+    if (isApi()) {
+      const data = await apiRequest('/v1/auth/register', {
+        username: cleanName,
+        password: cleanPassword
+      });
+      localStorage.setItem(SESSION_KEY, JSON.stringify(data.user));
+      return data.user;
+    }
+
+    const users = readUsers();
+    const key = normalize(cleanName);
+    if (users[key]) throw new Error('Este jugador ya tiene contraseña. Usá Ingresar.');
+
+    const salt = randomSalt();
+    users[key] = {
+      username: cleanName,
+      salt,
+      passwordHash: await digest(cleanPassword, salt),
+      createdAt: new Date().toISOString()
+    };
+    writeUsers(users);
+
+    const session = { username: cleanName, localPrototype: true };
+    localStorage.setItem(SESSION_KEY, JSON.stringify(session));
+    return session;
+  }
+
+  async function login(username, password) {
+    const cleanName = String(username || '').trim();
+    if (!cleanName) throw new Error('Elegí tu jugador');
+    const cleanPassword = validatePassword(password);
+
+    if (isApi()) {
+      const data = await apiRequest('/v1/auth/login', {
+        username: cleanName,
+        password: cleanPassword
+      });
+      localStorage.setItem(SESSION_KEY, JSON.stringify(data.user));
+      return data.user;
+    }
+
+    const account = readUsers()[normalize(cleanName)];
+    if (!account) throw new Error('Primera vez: creá tu contraseña de 6 números');
+    const candidate = await digest(cleanPassword, account.salt);
+    if (candidate !== account.passwordHash) throw new Error('Contraseña incorrecta');
+
+    const session = { username: account.username, localPrototype: true };
+    localStorage.setItem(SESSION_KEY, JSON.stringify(session));
+    return session;
+  }
+
+  function getSession() {
+    try { return JSON.parse(localStorage.getItem(SESSION_KEY) || 'null'); }
+    catch { return null; }
+  }
+
+  async function logout() {
+    if (isApi()) {
+      try { await apiRequest('/v1/auth/logout', {}); } catch { /* cierre local */ }
+    }
+    localStorage.removeItem(SESSION_KEY);
+  }
+
+  return {
+    passwordLength: PASSWORD_LENGTH,
+    validatePassword,
+    isValidPasswordFormat,
+    isRegistered,
+    isRegisteredSync,
+    listRegisteredUsernames,
+    register,
+    login,
+    logout,
+    getSession,
+    normalize
+  };
+})();
+
+
+
+================================================================================
+ ARCHIVO: ratings.js
+================================================================================
+
+/**
+ * Evaluaciones y partidos.
+ *
+ * Este adaptador funciona hoy con localStorage y mantiene un contrato simple
+ * para migrarlo a tablas/API cuando se implemente el backend real.
+ */
+const RatingsService = (() => {
+  const PEER_KEY = '3ertiempo_peer_ratings_v1';
+  const MATCHES_KEY = '3ertiempo_matches_v1';
+  const MATCH_VOTES_KEY = '3ertiempo_match_votes_v1';
+  const CARD_KEYS = ['velocidad', 'resistencia', 'fuerza', 'tiro', 'pase', 'regate', 'defensa'];
+  const ARQUERO_KEY = 'arquero';
+  const PEER_KEYS = [...CARD_KEYS, ARQUERO_KEY];
+  const MIN_VOTES_FOR_NEWSPAPER = 6;
+
+  function normalizePeerStats(stats) {
+    const out = {};
+    PEER_KEYS.forEach(key => {
+      if (stats?.[key] != null) out[key] = clamp(stats[key]);
+    });
+    if (stats?.fisico != null && out.resistencia == null) {
+      out.resistencia = clamp(stats.fisico);
+      out.fuerza = clamp(stats.fisico);
+    }
+    if (stats?.portero != null && out.arquero == null) {
+      out.arquero = clamp(stats.portero);
+    }
+    CARD_KEYS.forEach(key => {
+      if (out[key] == null) out[key] = 3;
+    });
+    return out;
+  }
+
+  function normalize(value) {
+    return String(value || '').trim().toLocaleLowerCase('es');
+  }
+
+  function read(key, fallback) {
+    try { return JSON.parse(localStorage.getItem(key) || JSON.stringify(fallback)); }
+    catch { return fallback; }
+  }
+
+  function write(key, value) {
+    localStorage.setItem(key, JSON.stringify(value));
+  }
+
+  function clamp(value) {
+    return Math.max(1, Math.min(5, Math.round(Number(value) || 3)));
+  }
+
+  function savePeerRating(rater, ratedPlayer, stats) {
+    if (normalize(rater) === normalize(ratedPlayer)) {
+      throw new Error('No podés calificarte a vos mismo');
+    }
+    const all = read(PEER_KEY, {});
+    const playerKey = normalize(ratedPlayer);
+    const raterKey = normalize(rater);
+    if (!all[playerKey]) all[playerKey] = {};
+    all[playerKey][raterKey] = {
+      rater,
+      createdAt: new Date().toISOString(),
+      stats: Object.fromEntries(PEER_KEYS.map(key => [
+        key,
+        clamp(stats[key] ?? (key === ARQUERO_KEY ? 1 : 3))
+      ]))
+    };
+    write(PEER_KEY, all);
+  }
+
+  function getMyPeerRating(rater, ratedPlayer) {
+    const all = read(PEER_KEY, {});
+    return all[normalize(ratedPlayer)]?.[normalize(rater)]?.stats || null;
+  }
+
+  function getPeerAverage(playerName) {
+    const all = read(PEER_KEY, {});
+    const ratings = Object.values(all[normalize(playerName)] || {});
+    if (!ratings.length) return { count: 0, stats: null };
+
+    const stats = {};
+    CARD_KEYS.forEach(key => {
+      stats[key] = ratings.reduce((sum, rating) => {
+        const normalized = normalizePeerStats(rating.stats);
+        return sum + normalized[key];
+      }, 0) / ratings.length;
+    });
+
+    const arqueroVotes = ratings
+      .map(rating => normalizePeerStats(rating.stats).arquero)
+      .filter(value => value != null);
+    if (arqueroVotes.length) {
+      stats.arquero = arqueroVotes.reduce((sum, value) => sum + value, 0) / arqueroVotes.length;
+    }
+
+    return { count: ratings.length, stats };
+  }
+
+  function createMatch({ format, teamClaro, teamOscuro }) {
+    const matches = read(MATCHES_KEY, []);
+    const match = {
+      id: `match_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+      date: new Date().toISOString(),
+      format,
+      teamClaro: teamClaro.map(player => player.nombre),
+      teamOscuro: teamOscuro.map(player => player.nombre),
+      status: 'voting'
+    };
+    matches.unshift(match);
+    write(MATCHES_KEY, matches.slice(0, 30));
+    return match;
+  }
+
+  function listMatches() {
+    return read(MATCHES_KEY, []);
+  }
+
+  function getMatch(id) {
+    return listMatches().find(match => match.id === id) || null;
+  }
+
+  function saveMatchVote(matchId, rater, ratedPlayer, score) {
+    if (normalize(rater) === normalize(ratedPlayer)) {
+      throw new Error('No podés votarte a vos mismo');
+    }
+    const all = read(MATCH_VOTES_KEY, {});
+    if (!all[matchId]) all[matchId] = {};
+    if (!all[matchId][normalize(rater)]) all[matchId][normalize(rater)] = {};
+    all[matchId][normalize(rater)][normalize(ratedPlayer)] = {
+      playerName: ratedPlayer,
+      score: clamp(score),
+      votedAt: new Date().toISOString()
+    };
+    write(MATCH_VOTES_KEY, all);
+  }
+
+  function getMyMatchVotes(matchId, rater) {
+    return read(MATCH_VOTES_KEY, {})[matchId]?.[normalize(rater)] || {};
+  }
+
+  function getMatchVoteCount(matchId) {
+    const matchVotes = read(MATCH_VOTES_KEY, {})[matchId] || {};
+    let count = 0;
+    Object.values(matchVotes).forEach(raterVotes => {
+      count += Object.keys(raterVotes).length;
+    });
+    return count;
+  }
+
+  function getMatchResults(matchId) {
+    const matchVotes = read(MATCH_VOTES_KEY, {})[matchId] || {};
+    const byPlayer = {};
+    Object.values(matchVotes).forEach(raterVotes => {
+      Object.values(raterVotes).forEach(vote => {
+        const key = normalize(vote.playerName);
+        if (!byPlayer[key]) byPlayer[key] = { playerName: vote.playerName, scores: [] };
+        byPlayer[key].scores.push(clamp(vote.score));
+      });
+    });
+
+    return Object.values(byPlayer)
+      .map(item => ({
+        playerName: item.playerName,
+        average: item.scores.reduce((a, b) => a + b, 0) / item.scores.length,
+        votes: item.scores.length
+      }))
+      .sort((a, b) => b.average - a.average);
+  }
+
+  function hash(text) {
+    return Array.from(String(text)).reduce((acc, char) => ((acc << 5) - acc + char.charCodeAt(0)) | 0, 0);
+  }
+
+  function choose(items, seed) {
+    return items[Math.abs(hash(seed)) % items.length];
+  }
+
+  function verdictFor(result, matchId) {
+    const name = result.playerName;
+    const score = result.average;
+    const seed = `${matchId}:${name}:${score.toFixed(2)}`;
+
+    if (score < 1.75) {
+      return choose([
+        `Paupérrimo partido de ${name}. Su rendimiento fue atroz y la tribuna no le perdonó una noche para el olvido.`,
+        `${name} quedó en deuda de principio a fin. Impreciso, desconectado y abucheado por una hinchada que esperaba mucho más.`,
+        `Noche negra para ${name}: nunca encontró el partido y terminó señalado por un desempeño realmente flojo.`
+      ], seed);
+    }
+    if (score < 2.75) {
+      return choose([
+        `${name} tuvo una actuación muy floja. Le costó entrar en juego y acumuló errores que condicionaron a su equipo.`,
+        `Partido para olvidar de ${name}. Mostró voluntad, pero su rendimiento estuvo muy por debajo de lo esperado.`,
+        `${name} no hizo pie y terminó reprobado. Necesitará revancha para borrar una presentación decepcionante.`
+      ], seed);
+    }
+    if (score < 3.75) {
+      return choose([
+        `${name} cumplió. Sin lujos ni grandes errores, sostuvo un rendimiento correcto durante el encuentro.`,
+        `Labor sobria de ${name}: hizo lo necesario, mantuvo el orden y aprobó sin sobresalir.`,
+        `${name} tuvo una noche pareja. Aportó equilibrio y respondió cuando el partido se lo pidió.`
+      ], seed);
+    }
+    if (score < 4.5) {
+      return choose([
+        `Muy buen partido de ${name}. Fue confiable, participativo y una pieza importante para su equipo.`,
+        `${name} se destacó con una actuación convincente. Mostró jerarquía y apareció en momentos decisivos.`,
+        `Gran noche de ${name}: intensidad, criterio y un rendimiento que levantó a sus compañeros.`
+      ], seed);
+    }
+    return choose([
+      `${name} fue la gran figura. Una actuación extraordinaria, ovacionada por todos los presentes.`,
+      `Exhibición de ${name}: dominó el partido y firmó una noche memorable, digna de todos los elogios.`,
+      `${name} brilló con luz propia. Imparable y decisivo, se llevó una ovación unánime.`
+    ], seed);
+  }
+
+  function buildNewspaper(match) {
+    const voteCount = getMatchVoteCount(match.id);
+    if (voteCount < MIN_VOTES_FOR_NEWSPAPER) return null;
+    const results = getMatchResults(match.id);
+    if (!results.length) return null;
+    const top = results[0];
+    const bottom = results[results.length - 1];
+    const globalAverage = results.reduce((sum, item) => sum + item.average, 0) / results.length;
+    const totalVotes = results.reduce((sum, item) => sum + item.votes, 0);
+
+    return {
+      kicker: `Edición ${new Date(match.date).toLocaleDateString('es-AR')}`,
+      headline: top.average >= 4.5
+        ? `${top.playerName}, dueño absoluto del 3er tiempo`
+        : `${top.playerName} se quedó con la noche`,
+      deck: `${totalVotes} votos marcaron el pulso de un partido con promedio general de ${globalAverage.toFixed(1)}.`,
+      figure: top,
+      lowest: bottom,
+      results,
+      articles: results.map(result => ({
+        ...result,
+        arrow: result.average < 2.5 ? 'down' : result.average < 3.5 ? 'flat' : 'up',
+        text: verdictFor(result, match.id)
+      }))
+    };
+  }
+
+  return {
+    cardKeys: PEER_KEYS,
+    fieldKeys: CARD_KEYS,
+    arqueroKey: ARQUERO_KEY,
+    minVotesForNewspaper: MIN_VOTES_FOR_NEWSPAPER,
+    savePeerRating,
+    getMyPeerRating,
+    getPeerAverage,
+    createMatch,
+    listMatches,
+    getMatch,
+    saveMatchVote,
+    getMyMatchVotes,
+    getMatchVoteCount,
+    getMatchResults,
+    buildNewspaper
+  };
+})();
+
+
+
+================================================================================
+ ARCHIVO: index.html
+================================================================================
+
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>3er tiempo — Armar equipos</title>
+  <style>
+    :root {
+      --grass-dark: #1a3d2e;
+      --grass-mid: #245a42;
+      --grass-light: #2d6b4f;
+      --line-white: rgba(255, 255, 255, 0.12);
+      --accent: #e8622c;
+      --accent-hover: #ff7844;
+      --text: #f0ebe3;
+      --text-muted: #a8b5a8;
+      --team-claro: #f5e6c8;
+      --team-claro-stroke: #d4b896;
+      --team-oscuro: #1a2744;
+      --team-oscuro-stroke: #3d5a80;
+      --card-bg: rgba(0, 0, 0, 0.35);
+      --input-bg: rgba(0, 0, 0, 0.4);
+      --warning: #f5c542;
+      --success: #6ecf8a;
+      --error: #ff6b6b;
+      --fifa-gold: linear-gradient(145deg, #c9a227 0%, #f5e6a8 35%, #b8860b 70%, #8b6914 100%);
+      --fifa-silver: linear-gradient(145deg, #8a9199 0%, #d8dde3 40%, #6b7280 100%);
+      --fifa-bronze: linear-gradient(145deg, #8b5a2b 0%, #c9956c 40%, #6b3f1f 100%);
+    }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      background-color: var(--grass-dark);
+      background-image:
+        repeating-linear-gradient(90deg, transparent, transparent 49px, var(--line-white) 49px, var(--line-white) 50px),
+        repeating-linear-gradient(0deg, transparent, transparent 49px, var(--line-white) 49px, var(--line-white) 50px),
+        radial-gradient(ellipse at 50% 0%, var(--grass-light) 0%, var(--grass-dark) 70%);
+      color: var(--text);
+      min-height: 100vh;
+      line-height: 1.5;
+    }
+
+    .container { max-width: 1120px; margin: 0 auto; padding: 1rem 1rem 3rem; }
+
+    header { text-align: center; padding: 1.5rem 0 1rem; }
+
+    .session-bar {
+      display: none;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.75rem;
+      padding: 0.65rem 0.8rem;
+      margin-bottom: 0.75rem;
+      border: 1px solid var(--line-white);
+      border-radius: 10px;
+      background: rgba(0, 0, 0, 0.28);
+      font-size: 0.82rem;
+    }
+
+    .session-bar.visible { display: flex; }
+    .session-user strong { color: var(--accent); }
+
+    .btn-ghost {
+      border: 1px solid var(--line-white);
+      border-radius: 7px;
+      background: transparent;
+      color: var(--text-muted);
+      padding: 0.38rem 0.65rem;
+      cursor: pointer;
+    }
+
+    .login-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 1000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 1rem;
+      background:
+        radial-gradient(circle at 50% 15%, rgba(45, 107, 79, 0.95), rgba(10, 28, 21, 0.98)),
+        var(--grass-dark);
+    }
+
+    .login-overlay.hidden { display: none; }
+
+    .login-card {
+      width: min(100%, 420px);
+      padding: 1.6rem;
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      border-radius: 18px;
+      background: rgba(8, 24, 17, 0.84);
+      box-shadow: 0 24px 70px rgba(0, 0, 0, 0.5);
+      text-align: center;
+    }
+
+    .login-ball { font-size: 2.5rem; margin-bottom: 0.3rem; }
+    .login-card h2 {
+      font-family: Impact, 'Arial Narrow', sans-serif;
+      font-size: 2rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      text-shadow: 2px 2px 0 var(--accent);
+    }
+
+    .login-copy {
+      margin: 0.4rem 0 1.2rem;
+      color: var(--text-muted);
+      font-size: 0.85rem;
+    }
+
+    .login-form { display: grid; gap: 0.75rem; text-align: left; }
+    .login-form label { font-size: 0.72rem; text-transform: uppercase; color: var(--text-muted); }
+    .login-form select,
+    .login-form input {
+      width: 100%;
+      margin-top: 0.22rem;
+      padding: 0.75rem;
+      border: 1px solid var(--line-white);
+      border-radius: 9px;
+      background: var(--input-bg);
+      color: var(--text);
+      font-size: 1rem;
+    }
+
+    .login-submit {
+      padding: 0.8rem;
+      border: 0;
+      border-radius: 9px;
+      background: var(--accent);
+      color: white;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      cursor: pointer;
+    }
+
+    .login-form input[type="password"],
+    .login-form input.login-pin {
+      font-family: 'Consolas', 'Courier New', monospace;
+      font-size: 1.35rem;
+      letter-spacing: 0.35em;
+      text-align: center;
+    }
+
+    .login-hint {
+      min-height: 2.4rem;
+      color: var(--text-muted);
+      font-size: 0.78rem;
+      line-height: 1.35;
+    }
+
+    .login-hint.register { color: var(--success); }
+
+    .login-message { min-height: 1.2rem; color: var(--text-muted); font-size: 0.78rem; }
+    .login-message.success { color: var(--success); }
+    .login-message.error { color: var(--error); }
+    .prototype-note { margin-top: 0.8rem; color: var(--warning); font-size: 0.68rem; }
+
+    h1 {
+      font-family: 'Arial Narrow', 'Franklin Gothic Medium Condensed', 'Impact', sans-serif;
+      font-stretch: condensed;
+      font-size: clamp(2.2rem, 8vw, 3.5rem);
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      text-shadow: 2px 2px 0 var(--accent);
+    }
+
+    .subtitle { color: var(--text-muted); font-size: 0.9rem; margin-top: 0.25rem; }
+
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--line-white);
+      border-radius: 12px;
+      padding: 1rem 1.25rem;
+      margin-bottom: 1.25rem;
+      backdrop-filter: blur(4px);
+    }
+
+    .card h2 {
+      font-family: 'Arial Narrow', 'Franklin Gothic Medium Condensed', sans-serif;
+      font-stretch: condensed;
+      font-size: 1.1rem;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--accent);
+      margin-bottom: 0.75rem;
+    }
+
+    .format-buttons { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+
+    .format-btn {
+      flex: 1 1 calc(25% - 0.5rem);
+      min-width: 70px;
+      padding: 0.6rem 0.5rem;
+      border: 2px solid var(--line-white);
+      border-radius: 8px;
+      background: var(--input-bg);
+      color: var(--text);
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    .format-btn.active {
+      border-color: var(--accent);
+      background: rgba(232, 98, 44, 0.25);
+      color: var(--accent);
+    }
+
+    .warning-box {
+      display: none;
+      margin-top: 0.75rem;
+      padding: 0.6rem 0.85rem;
+      border-radius: 8px;
+      background: rgba(245, 197, 66, 0.15);
+      border: 1px solid var(--warning);
+      color: var(--warning);
+      font-size: 0.88rem;
+    }
+
+    .warning-box.visible { display: block; }
+
+    .load-status { font-size: 0.82rem; color: var(--text-muted); margin-bottom: 0; }
+    .load-status.error { color: var(--error); }
+
+    /* Grid de cartas FIFA */
+    .players-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(175px, 1fr));
+      gap: 1rem;
+    }
+
+    .fifa-card {
+      position: relative;
+      aspect-ratio: 0.72;
+      max-width: 230px;
+      width: 100%;
+      justify-self: center;
+      padding: 0.8rem 0.75rem 0.7rem;
+      cursor: pointer;
+      border: 1px solid rgba(255, 255, 255, 0.28);
+      border-radius: 16px;
+      box-shadow:
+        0 2px 2px rgba(255, 255, 255, 0.18) inset,
+        0 -5px 12px rgba(45, 27, 0, 0.18) inset,
+        0 4px 0 rgba(20, 12, 2, 0.28),
+        0 12px 22px rgba(0, 0, 0, 0.46),
+        0 24px 42px rgba(0, 0, 0, 0.24);
+      transition: transform 0.15s, box-shadow 0.15s;
+      color: #1a1208;
+      overflow: hidden;
+      isolation: isolate;
+    }
+
+    .fifa-card::before {
+      content: '';
+      position: absolute;
+      inset: 5px;
+      z-index: -1;
+      border: 2px solid rgba(72, 48, 3, 0.32);
+      border-radius: 11px;
+      pointer-events: none;
+    }
+
+    .fifa-card::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      z-index: -2;
+      background:
+        radial-gradient(circle at 50% 38%, rgba(255,255,255,0.48), transparent 28%),
+        repeating-linear-gradient(125deg, transparent 0 18px, rgba(255,255,255,0.08) 19px 20px);
+      pointer-events: none;
+    }
+
+    .fifa-card-photo {
+      position: absolute;
+      left: 25%;
+      top: 13%;
+      width: 70%;
+      height: 48%;
+      object-fit: cover;
+      object-position: center top;
+      opacity: 0.98;
+      z-index: 0;
+      filter: contrast(1.04) saturate(0.92);
+      -webkit-mask-image: linear-gradient(to bottom, #000 68%, transparent 100%);
+      mask-image: linear-gradient(to bottom, #000 68%, transparent 100%);
+    }
+
+    .fifa-card-body {
+      position: relative;
+      z-index: 1;
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      padding-bottom: 0.65rem;
+    }
+
+    .fifa-card:hover {
+      transform: translateY(-5px) rotateX(1deg);
+      box-shadow:
+        0 2px 2px rgba(255, 255, 255, 0.22) inset,
+        0 -5px 12px rgba(45, 27, 0, 0.2) inset,
+        0 5px 0 rgba(20, 12, 2, 0.25),
+        0 18px 30px rgba(0, 0, 0, 0.52),
+        0 30px 55px rgba(0, 0, 0, 0.28);
+    }
+    .fifa-card.tier-gold { background: var(--fifa-gold); }
+    .fifa-card.tier-silver { background: var(--fifa-silver); }
+    .fifa-card.tier-bronze { background: var(--fifa-bronze); }
+
+    .fifa-card-top {
+      display: flex;
+      align-items: flex-start;
+      gap: 0.15rem;
+      margin-bottom: 0.2rem;
+    }
+
+    .fifa-ovr {
+      font-family: 'Arial Narrow', 'Impact', sans-serif;
+      font-size: 2.15rem;
+      font-weight: 900;
+      line-height: 1;
+      letter-spacing: -0.02em;
+    }
+
+    .fifa-pos {
+      font-size: 0.65rem;
+      font-weight: 800;
+      text-transform: uppercase;
+      margin-top: 0.15rem;
+      opacity: 0.85;
+    }
+
+    .fifa-pos-wrap {
+      display: flex;
+      flex-direction: column;
+      gap: 0.05rem;
+      margin-top: 0.1rem;
+    }
+
+    .fifa-pos-main { font-size: 0.62rem; font-weight: 800; line-height: 1; }
+    .fifa-pos-sub { font-size: 0.52rem; font-weight: 700; opacity: 0.8; line-height: 1; }
+
+    .fifa-pos-arq {
+      font-size: 0.48rem;
+      font-weight: 800;
+      letter-spacing: 0.04em;
+      background: rgba(26, 39, 68, 0.2);
+      padding: 0.08rem 0.22rem;
+      border-radius: 3px;
+      align-self: flex-start;
+      margin-top: 0.08rem;
+    }
+
+    .field-check {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-size: 0.85rem;
+      cursor: pointer;
+      margin-top: 0.35rem;
+    }
+
+    .field-check input { width: auto; accent-color: var(--accent); }
+
+    .fifa-name {
+      font-family: 'Arial Narrow', 'Franklin Gothic Medium Condensed', sans-serif;
+      font-stretch: condensed;
+      font-size: 0.9rem;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      line-height: 1.1;
+      margin-top: auto;
+      margin-bottom: 0.4rem;
+      padding: 0.28rem 0.2rem;
+      min-height: 0;
+      text-align: center;
+      border-top: 1px solid rgba(54, 36, 5, 0.36);
+      border-bottom: 1px solid rgba(54, 36, 5, 0.36);
+    }
+
+    .fifa-stats {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0.12rem 0.75rem;
+      padding: 0 0.35rem;
+      font-size: 0.72rem;
+      font-weight: 700;
+    }
+
+    .fifa-stat { display: flex; justify-content: space-between; gap: 0.2rem; }
+    .fifa-stat abbr { opacity: 0.75; font-weight: 600; text-decoration: none; }
+
+    .fifa-meta {
+      margin-top: 0.35rem;
+      font-size: 0.6rem;
+      opacity: 0.7;
+      text-align: center;
+    }
+
+    .fifa-photo-placeholder {
+      position: absolute;
+      left: 34%;
+      top: 17%;
+      width: 54%;
+      height: 40%;
+      display: grid;
+      place-items: center;
+      border-radius: 50% 50% 42% 42%;
+      background: rgba(54, 36, 5, 0.12);
+      color: rgba(54, 36, 5, 0.42);
+      font-family: Impact, sans-serif;
+      font-size: 2.4rem;
+      z-index: 0;
+    }
+
+    .fifa-peer {
+      position: absolute;
+      right: 0.15rem;
+      top: 2.25rem;
+      padding: 0.12rem 0.28rem;
+      border-radius: 4px;
+      background: rgba(26, 39, 68, 0.8);
+      color: #fff;
+      font-size: 0.48rem;
+      font-weight: 800;
+      text-transform: uppercase;
+    }
+
+    .fifa-gk-badge {
+      position: absolute;
+      left: 0.45rem;
+      top: 50%;
+      transform: translateY(-50%);
+      z-index: 4;
+      display: grid;
+      place-items: center;
+      width: 1.55rem;
+      height: 1.55rem;
+      border-radius: 50%;
+      background: rgba(26, 39, 68, 0.82);
+      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
+      pointer-events: none;
+    }
+
+    .fifa-gk-badge svg {
+      width: 0.95rem;
+      height: 0.95rem;
+      fill: #f5e6a8;
+    }
+
+    .fifa-arq {
+      margin-top: 0.2rem;
+      font-size: 0.58rem;
+      font-weight: 800;
+      letter-spacing: 0.06em;
+      text-align: center;
+      opacity: 0.78;
+    }
+
+    .fifa-card-action {
+      margin-top: 0.2rem;
+      text-align: center;
+      font-size: 0.5rem;
+      font-weight: 800;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      opacity: 0.72;
+    }
+
+    .card-self-badge {
+      position: absolute;
+      left: 50%;
+      top: 5%;
+      transform: translateX(-50%);
+      z-index: 2;
+      padding: 0.12rem 0.35rem;
+      border-radius: 10px;
+      background: var(--accent);
+      color: white;
+      font-size: 0.5rem;
+      font-weight: 800;
+      text-transform: uppercase;
+    }
+
+    .fifa-card-add {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 0.35rem;
+      background: rgba(0, 0, 0, 0.25);
+      border: 2px dashed var(--line-white);
+      color: var(--text-muted);
+      cursor: pointer;
+      min-height: 180px;
+    }
+
+    .fifa-card-add:hover {
+      border-color: var(--accent);
+      color: var(--accent);
+      transform: translateY(-3px);
+    }
+
+    .fifa-card-add-icon {
+      font-size: 2rem;
+      line-height: 1;
+      font-weight: 300;
+    }
+
+    .fifa-card-add-label {
+      font-size: 0.72rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      text-align: center;
+    }
+
+    .roster-toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.75rem;
+      margin-bottom: 0.75rem;
+      flex-wrap: wrap;
+    }
+
+    .selection-toolbar {
+      display: flex;
+      align-items: center;
+      gap: 0.55rem;
+      flex-wrap: wrap;
+    }
+
+    .selection-count {
+      padding: 0.45rem 0.7rem;
+      border: 1px solid var(--line-white);
+      border-radius: 8px;
+      background: rgba(0, 0, 0, 0.25);
+      color: var(--text-muted);
+      font-size: 0.8rem;
+      font-weight: 700;
+    }
+
+    .selection-count.complete {
+      border-color: var(--success);
+      color: var(--success);
+      background: rgba(110, 207, 138, 0.1);
+    }
+
+    .player-select-toggle {
+      position: absolute;
+      right: 0.55rem;
+      top: 0.55rem;
+      z-index: 5;
+      display: grid;
+      place-items: center;
+      width: 31px;
+      height: 31px;
+      border: 2px solid rgba(26, 39, 68, 0.48);
+      border-radius: 50%;
+      background: rgba(245, 245, 242, 0.9);
+      color: #1a2744;
+      font-size: 1rem;
+      font-weight: 900;
+      cursor: pointer;
+      box-shadow: 0 3px 8px rgba(0,0,0,0.28);
+    }
+
+    .player-select-toggle.selected {
+      border-color: #145c32;
+      background: #3aa666;
+      color: white;
+    }
+
+    .fifa-card.selected {
+      border-color: rgba(110, 207, 138, 0.9);
+      box-shadow:
+        0 2px 2px rgba(255, 255, 255, 0.18) inset,
+        0 -5px 12px rgba(45, 27, 0, 0.18) inset,
+        0 0 0 3px rgba(110, 207, 138, 0.7),
+        0 12px 24px rgba(0, 0, 0, 0.5),
+        0 0 26px rgba(110, 207, 138, 0.2);
+    }
+
+    .btn-add-player {
+      padding: 0.5rem 0.85rem;
+      border: 2px solid var(--accent);
+      border-radius: 8px;
+      background: transparent;
+      color: var(--accent);
+      font-size: 0.82rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      cursor: pointer;
+    }
+
+    .btn-add-player:hover { background: rgba(232, 98, 44, 0.15); }
+
+    .field-full { grid-column: 1 / -1; }
+
+    .photo-section { text-align: center; }
+
+    .photo-preview-wrap {
+      width: 110px;
+      height: 110px;
+      margin: 0 auto 0.65rem;
+      border-radius: 10px;
+      overflow: hidden;
+      border: 2px solid var(--line-white);
+      background: rgba(0,0,0,0.3);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .photo-preview-wrap img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
+    .photo-placeholder {
+      font-size: 0.72rem;
+      color: var(--text-muted);
+      padding: 0.5rem;
+    }
+
+    .photo-preview-wrap.has-photo .photo-placeholder { display: none; }
+    .photo-preview-wrap:not(.has-photo) img { display: none; }
+
+    .btn-photo {
+      display: inline-block;
+      padding: 0.5rem 0.85rem;
+      border: 2px solid var(--accent);
+      border-radius: 8px;
+      color: var(--accent);
+      font-size: 0.78rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      cursor: pointer;
+    }
+
+    .btn-photo input { display: none; }
+
+    .photo-hint {
+      font-size: 0.68rem;
+      color: var(--text-muted);
+      margin-top: 0.45rem;
+    }
+
+    /* Modal editor */
+    .modal-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.75);
+      z-index: 100;
+      overflow-y: auto;
+      padding: 1rem;
+    }
+
+    .modal-overlay.open { display: flex; align-items: flex-start; justify-content: center; }
+
+    .modal {
+      background: var(--grass-mid);
+      border: 1px solid var(--line-white);
+      border-radius: 14px;
+      width: 100%;
+      max-width: 520px;
+      margin: auto;
+      padding: 1rem 1.15rem 1.25rem;
+    }
+
+    .modal-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 1rem;
+    }
+
+    .modal-header h3 {
+      font-family: 'Arial Narrow', sans-serif;
+      font-stretch: condensed;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--accent);
+      font-size: 1.1rem;
+    }
+
+    .modal-close {
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      font-size: 1.5rem;
+      cursor: pointer;
+      line-height: 1;
+    }
+
+    .modal-preview { display: flex; justify-content: center; margin-bottom: 1rem; }
+    .modal-preview .fifa-card { width: 130px; cursor: default; }
+    .modal-preview .fifa-card:hover { transform: none; }
+
+    .form-section { margin-bottom: 1rem; }
+
+    .form-section h4 {
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--accent);
+      margin-bottom: 0.5rem;
+      padding-bottom: 0.25rem;
+      border-bottom: 1px solid var(--line-white);
+    }
+
+    .form-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0.5rem;
+    }
+
+    .form-grid.cols-3 { grid-template-columns: repeat(3, 1fr); }
+
+    .field label {
+      display: block;
+      font-size: 0.68rem;
+      color: var(--text-muted);
+      margin-bottom: 0.2rem;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+    }
+
+    .field input, .field select {
+      width: 100%;
+      padding: 0.45rem 0.5rem;
+      border: 1px solid var(--line-white);
+      border-radius: 6px;
+      background: var(--input-bg);
+      color: var(--text);
+      font-size: 0.9rem;
+    }
+
+    .field input:focus, .field select:focus {
+      outline: none;
+      border-color: var(--accent);
+    }
+
+    .field input[type=number] { text-align: center; -moz-appearance: textfield; }
+    .field input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; }
+
+    .modal-footer {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      margin-top: 1rem;
+    }
+
+    .btn-save {
+      flex: 1;
+      padding: 0.75rem;
+      border: none;
+      border-radius: 8px;
+      background: var(--accent);
+      color: #fff;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      cursor: pointer;
+    }
+
+    .save-status { font-size: 0.8rem; min-width: 80px; }
+    .save-status.saving { color: var(--text-muted); }
+    .save-status.saved { color: var(--success); }
+    .save-status.error { color: var(--error); }
+
+    .actions { display: flex; flex-wrap: wrap; gap: 0.75rem; margin-bottom: 1.25rem; }
+
+    .btn-primary, .btn-secondary {
+      flex: 1 1 auto;
+      padding: 0.85rem 1.5rem;
+      border-radius: 10px;
+      font-weight: 700;
+      cursor: pointer;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .btn-primary {
+      border: none;
+      background: var(--accent);
+      color: #fff;
+      font-size: 1.1rem;
+    }
+
+    .btn-primary:disabled {
+      opacity: 0.42;
+      cursor: not-allowed;
+      filter: grayscale(0.45);
+    }
+
+    .btn-secondary {
+      border: 2px solid var(--accent);
+      background: transparent;
+      color: var(--accent);
+    }
+
+    .btn-secondary:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    #results { display: none; }
+    #results.visible { display: block; }
+
+    .teams-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; margin-bottom: 1rem; }
+    @media (max-width: 500px) { .teams-grid { grid-template-columns: 1fr; } }
+
+    .team-box { border-radius: 10px; padding: 0.85rem 1rem; }
+    .team-box.claro { background: rgba(245,230,200,0.12); border: 2px solid var(--team-claro-stroke); }
+    .team-box.oscuro { background: rgba(26,39,68,0.5); border: 2px solid var(--team-oscuro-stroke); }
+
+    .team-box h3 {
+      font-family: 'Arial Narrow', sans-serif;
+      text-transform: uppercase;
+      font-size: 1rem;
+      margin-bottom: 0.5rem;
+    }
+
+    .team-box.claro h3 { color: var(--team-claro); }
+    .team-box.oscuro h3 { color: #7a9ec8; }
+
+    .team-box ul { list-style: none; font-size: 0.88rem; }
+    .team-box li { padding: 0.2rem 0; border-bottom: 1px solid rgba(255,255,255,0.06); display: flex; justify-content: space-between; }
+    .team-ovr { color: var(--text-muted); font-size: 0.78rem; }
+
+    .sobrantes { margin-top: 0.5rem; font-size: 0.85rem; color: var(--text-muted); }
+    .sobrantes strong { color: var(--warning); }
+
+    .radar-wrap { display: flex; flex-direction: column; align-items: center; gap: 0.75rem; }
+    .radar-legend { display: flex; gap: 1.5rem; font-size: 0.85rem; }
+    .legend-item { display: flex; align-items: center; gap: 0.4rem; }
+    .legend-swatch { width: 16px; height: 16px; border-radius: 3px; opacity: 0.7; }
+    .legend-swatch.claro { background: var(--team-claro); }
+    .legend-swatch.oscuro { background: #4a6fa5; }
+    #radar-svg { width: 100%; max-width: 340px; height: auto; }
+    .cost-info { text-align: center; font-size: 0.78rem; color: var(--text-muted); }
+
+    .section-heading-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.75rem;
+      margin-bottom: 0.75rem;
+    }
+
+    .section-heading-row h2 { margin-bottom: 0; }
+
+    .peer-form-grid { display: grid; gap: 0.55rem; }
+
+    .peer-group-title {
+      margin-top: 0.35rem;
+      font-size: 0.72rem;
+      font-weight: 800;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--accent);
+    }
+
+    .rating-row {
+      display: grid;
+      grid-template-columns: minmax(90px, 1fr) repeat(5, 34px);
+      align-items: center;
+      gap: 0.3rem;
+    }
+
+    .rating-label { font-size: 0.78rem; color: var(--text-muted); }
+
+    .rating-choice input { position: absolute; opacity: 0; pointer-events: none; }
+    .rating-choice span {
+      display: grid;
+      place-items: center;
+      width: 34px;
+      height: 34px;
+      border: 1px solid var(--line-white);
+      border-radius: 7px;
+      background: var(--input-bg);
+      color: var(--text-muted);
+      font-size: 0.78rem;
+      cursor: pointer;
+    }
+
+    .rating-choice input:checked + span {
+      border-color: var(--accent);
+      background: var(--accent);
+      color: white;
+      font-weight: 800;
+    }
+
+    .peer-note {
+      padding: 0.65rem 0.8rem;
+      margin-bottom: 0.8rem;
+      border-left: 3px solid var(--accent);
+      background: rgba(232, 98, 44, 0.1);
+      color: var(--text-muted);
+      font-size: 0.75rem;
+    }
+
+    .match-voting { display: none; }
+    .match-voting.visible { display: block; }
+
+    .match-player-row {
+      display: grid;
+      grid-template-columns: minmax(110px, 1fr) repeat(5, 42px);
+      align-items: center;
+      gap: 0.35rem;
+      padding: 0.6rem 0;
+      border-bottom: 1px solid var(--line-white);
+    }
+
+    .match-player-info strong { display: block; font-size: 0.88rem; }
+    .match-player-info small { color: var(--text-muted); font-size: 0.68rem; }
+
+    .performance-choice input { position: absolute; opacity: 0; pointer-events: none; }
+    .performance-choice span {
+      display: grid;
+      place-items: center;
+      width: 42px;
+      height: 42px;
+      border: 1px solid var(--line-white);
+      border-radius: 9px;
+      background: var(--input-bg);
+      cursor: pointer;
+      font-weight: 800;
+      font-size: 0.74rem;
+    }
+
+    .performance-choice.down span { color: #ff7777; }
+    .performance-choice.flat span { color: #f5c542; }
+    .performance-choice.up span { color: #6ecf8a; }
+    .performance-choice input:checked + span {
+      border-color: currentColor;
+      box-shadow: 0 0 0 2px currentColor;
+      background: rgba(255,255,255,0.08);
+    }
+
+    .newspaper-section { display: none; }
+    .newspaper-section.visible { display: block; }
+
+    .newspaper {
+      position: relative;
+      overflow: hidden;
+      padding: clamp(1rem, 4vw, 2rem);
+      border-radius: 3px;
+      background:
+        repeating-linear-gradient(0deg, rgba(65, 53, 39, 0.025) 0 1px, transparent 1px 4px),
+        #eee7d6;
+      color: #252019;
+      box-shadow: 0 12px 35px rgba(0,0,0,0.38);
+    }
+
+    .newspaper::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      box-shadow: inset 0 0 50px rgba(80, 55, 20, 0.12);
+    }
+
+    .paper-masthead {
+      display: flex;
+      align-items: end;
+      justify-content: space-between;
+      gap: 1rem;
+      padding-bottom: 0.45rem;
+      border-bottom: 4px double #252019;
+    }
+
+    .paper-brand {
+      font-family: Georgia, 'Times New Roman', serif;
+      font-size: clamp(1.55rem, 6vw, 3.2rem);
+      font-weight: 900;
+      line-height: 0.9;
+      letter-spacing: -0.04em;
+      text-transform: uppercase;
+    }
+
+    .paper-date { font: 0.68rem Georgia, serif; white-space: nowrap; }
+    .paper-kicker { margin-top: 0.8rem; color: #9b3215; font: 700 0.68rem Arial, sans-serif; text-transform: uppercase; }
+    .paper-headline {
+      margin: 0.25rem 0 0.35rem;
+      font: 900 clamp(1.8rem, 7vw, 4.2rem)/0.94 Georgia, serif;
+      letter-spacing: -0.045em;
+    }
+
+    .paper-deck {
+      padding-bottom: 0.75rem;
+      border-bottom: 1px solid #7c7467;
+      font: italic 1rem/1.35 Georgia, serif;
+      color: #4c4439;
+    }
+
+    .paper-grid {
+      display: grid;
+      grid-template-columns: 1.2fr 0.8fr;
+      gap: 1.2rem;
+      margin-top: 1rem;
+    }
+
+    .paper-lead {
+      columns: 2 190px;
+      column-gap: 1rem;
+      font: 0.85rem/1.55 Georgia, serif;
+    }
+
+    .paper-article { break-inside: avoid; margin-bottom: 0.85rem; }
+    .paper-article strong { font-family: Arial, sans-serif; }
+
+    .paper-ratings {
+      border-left: 1px solid #7c7467;
+      padding-left: 1rem;
+    }
+
+    .paper-ratings h4 {
+      margin-bottom: 0.55rem;
+      font: 900 1rem Arial, sans-serif;
+      text-transform: uppercase;
+    }
+
+    .paper-rating-row {
+      display: grid;
+      grid-template-columns: 20px 1fr auto;
+      gap: 0.45rem;
+      padding: 0.35rem 0;
+      border-bottom: 1px dotted #8b8173;
+      font: 0.78rem Arial, sans-serif;
+    }
+
+    .trend-up { color: #267743; }
+    .trend-flat { color: #8d6a08; }
+    .trend-down { color: #a52f29; }
+
+    @media (max-width: 620px) {
+      .players-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.55rem; }
+      .fifa-card { max-width: none; }
+      .rating-row { grid-template-columns: 1fr repeat(5, 30px); }
+      .rating-choice span { width: 30px; height: 30px; }
+      .match-player-row { grid-template-columns: 1fr repeat(5, 36px); }
+      .performance-choice span { width: 36px; height: 36px; }
+      .paper-grid { grid-template-columns: 1fr; }
+      .paper-ratings { border-left: 0; border-top: 1px solid #7c7467; padding: 0.8rem 0 0; }
+      .form-grid.cols-3 { grid-template-columns: 1fr 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="login-overlay" id="login-overlay">
+    <div class="login-card">
+      <div class="login-ball">⚽</div>
+      <h2>3er Tiempo</h2>
+      <p class="login-copy">Cada jugador es un usuario. Elegí tu nombre y creá una contraseña de <strong>6 números</strong>. Recordala: la vas a necesitar cada vez que ingreses.</p>
+      <form class="login-form" id="login-form">
+        <label>
+          Tu jugador
+          <select id="login-player" required>
+            <option value="">Elegí tu nombre</option>
+          </select>
+        </label>
+        <label>
+          Contraseña (6 números)
+          <input id="login-password" class="login-pin" type="password" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" minlength="6" autocomplete="current-password" placeholder="••••••" required>
+        </label>
+        <p class="login-hint" id="login-hint">Elegí tu jugador para continuar.</p>
+        <button class="login-submit" id="login-submit" type="submit">Ingresar</button>
+        <p class="login-message" id="login-message"></p>
+      </form>
+      <p class="prototype-note">Las cuentas se guardan en este dispositivo. Cerrá sesión para cambiar de jugador.</p>
+    </div>
+  </div>
+
+  <div class="container">
+    <header>
+      <h1>3er Tiempo</h1>
+      <p class="subtitle">Cartas · Equipos parejos · La crónica del partido</p>
+    </header>
+
+    <div class="session-bar" id="session-bar">
+      <span class="session-user">Jugando como <strong id="session-username"></strong></span>
+      <button class="btn-ghost" id="btn-logout" type="button">Cerrar sesión</button>
+    </div>
+
+    <section class="card">
+      <h2>Formato de partido</h2>
+      <div class="format-buttons" id="format-buttons">
+        <button class="format-btn" data-size="5">Fútbol 5</button>
+        <button class="format-btn active" data-size="7">Fútbol 7</button>
+        <button class="format-btn" data-size="9">Fútbol 9</button>
+        <button class="format-btn" data-size="11">Fútbol 11</button>
+      </div>
+      <div class="warning-box" id="format-warning"></div>
+    </section>
+
+    <section class="card">
+      <h2>Plantilla</h2>
+      <div class="roster-toolbar">
+        <p class="load-status" id="load-status">Cargando jugadores…</p>
+        <div class="selection-toolbar">
+          <span class="selection-count" id="selection-count">0 de 14 convocados</span>
+          <button type="button" class="btn-ghost" id="btn-clear-selection">Limpiar</button>
+          <button type="button" class="btn-add-player" id="btn-add-player">+ Agregar jugador</button>
+        </div>
+      </div>
+      <div class="players-grid" id="players-grid"></div>
+    </section>
+
+    <div class="actions">
+      <button class="btn-primary" id="btn-armar" disabled>Seleccioná 14 jugadores</button>
+      <button class="btn-secondary" id="btn-barajar" disabled>Volver a barajar</button>
+    </div>
+
+    <section class="card" id="results">
+      <h2>Equipos</h2>
+      <div class="teams-grid">
+        <div class="team-box claro">
+          <h3>Equipo Claro</h3>
+          <ul id="team-claro-list"></ul>
+        </div>
+        <div class="team-box oscuro">
+          <h3>Equipo Oscuro</h3>
+          <ul id="team-oscuro-list"></ul>
+        </div>
+      </div>
+      <p class="sobrantes" id="sobrantes-info"></p>
+      <h2 style="margin-top:1.25rem">Rendimiento</h2>
+      <div class="radar-wrap">
+        <div class="radar-legend">
+          <span class="legend-item"><span class="legend-swatch claro"></span> Equipo Claro</span>
+          <span class="legend-item"><span class="legend-swatch oscuro"></span> Equipo Oscuro</span>
+        </div>
+        <svg id="radar-svg" viewBox="0 0 300 300" xmlns="http://www.w3.org/2000/svg"></svg>
+        <p class="cost-info" id="cost-info"></p>
+      </div>
+      <div class="actions" style="margin:1rem 0 0">
+        <button class="btn-primary" id="btn-registrar-partido" type="button">Registrar partido y votar</button>
+      </div>
+    </section>
+
+    <section class="card match-voting" id="match-voting">
+      <div class="section-heading-row">
+        <h2>Votación postpartido</h2>
+        <span class="load-status" id="match-vote-status"></span>
+      </div>
+      <p class="peer-note">Calificá del 1 al 5. Tu propio nombre no aparece: nadie puede votarse a sí mismo. El periódico se publica con al menos 6 votos.</p>
+      <div id="match-vote-list"></div>
+      <button class="btn-primary" id="btn-save-match-votes" type="button" style="width:100%;margin-top:1rem">Guardar votos y publicar periódico</button>
+    </section>
+
+    <section class="newspaper-section" id="newspaper-section">
+      <div class="newspaper" id="newspaper"></div>
+    </section>
+  </div>
+
+  <!-- Modal editor -->
+  <div class="modal-overlay" id="modal-overlay">
+    <div class="modal">
+      <div class="modal-header">
+        <h3 id="modal-title">Editar jugador</h3>
+        <button class="modal-close" id="modal-close" aria-label="Cerrar">&times;</button>
+      </div>
+      <div class="modal-preview" id="modal-preview"></div>
+      <form id="player-form"></form>
+      <div class="modal-footer">
+        <button type="button" class="btn-save" id="btn-save">Guardar cambios</button>
+        <span class="save-status" id="modal-save-status"></span>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="peer-modal-overlay">
+    <div class="modal">
+      <div class="modal-header">
+        <h3 id="peer-modal-title">Calificar jugador</h3>
+        <button class="modal-close" id="peer-modal-close" aria-label="Cerrar">&times;</button>
+      </div>
+      <div class="modal-preview" id="peer-modal-preview"></div>
+      <p class="peer-note">Calificá los atributos de campo por separado. El arquero también lo califican los demás y no promedia en la media general.</p>
+      <form class="peer-form-grid" id="peer-rating-form"></form>
+      <div class="modal-footer">
+        <button type="button" class="btn-save" id="btn-save-peer-rating">Guardar valoración</button>
+        <span class="save-status" id="peer-save-status"></span>
+      </div>
+    </div>
+  </div>
+
+  <script src="config.js"></script>
+  <script src="api.js"></script>
+  <script src="auth.js"></script>
+  <script src="ratings.js"></script>
+  <script>
+    const CARD_ATTRS = ['velocidad', 'tiro', 'pase', 'regate', 'defensa', 'fisico'];
+    const CARD_LABELS = ['RIT', 'TIR', 'PAS', 'REG', 'DEF', 'FÍS'];
+    const CARD_LABELS_FULL = ['Velocidad', 'Tiro', 'Pase', 'Regate', 'Defensa', 'Físico'];
+
+    const BALANCE_ATTRS = [...CARD_ATTRS];
+    const BALANCE_WEIGHTS = {
+      velocidad: 1, tiro: 1, pase: 1, regate: 1, defensa: 1, fisico: 1
+    };
+
+    const POSICIONES_CAMPO = ['DEF', 'MED', 'DEL', 'LIB'];
+    const PIES = ['Derecho', 'Izquierdo', 'Ambidiestro'];
+
+    const ITERATIONS = 600;
+    const TOP_N = 5;
+    const GK_MIN_RATING = 3;
+
+    const OUTFIELD_FORMATIONS = {
+      4: [
+        { def: 1, med: 2, del: 1 },
+        { def: 2, med: 1, del: 1 },
+        { def: 1, med: 1, del: 2 }
+      ],
+      6: [
+        { def: 2, med: 3, del: 1 },
+        { def: 2, med: 2, del: 2 },
+        { def: 3, med: 2, del: 1 },
+        { def: 3, med: 1, del: 2 },
+        { def: 1, med: 3, del: 2 }
+      ],
+      8: [
+        { def: 3, med: 3, del: 2 },
+        { def: 3, med: 2, del: 3 },
+        { def: 4, med: 2, del: 2 },
+        { def: 2, med: 4, del: 2 }
+      ],
+      10: [
+        { def: 4, med: 3, del: 3 },
+        { def: 3, med: 4, del: 3 },
+        { def: 4, med: 4, del: 2 },
+        { def: 3, med: 3, del: 4 }
+      ]
+    };
+
+    let players = [];
+    let teamSize = 7;
+    let lastTopCombos = [];
+    let editingIdx = -1;
+    let isCreating = false;
+    let pendingPhoto = null;
+    let currentSession = null;
+    let currentCombo = null;
+    let currentMatch = null;
+    let peerRatingIdx = -1;
+    let selectedPlayerNames = loadPlayerSelection();
+
+    function loadPlayerSelection() {
+      try {
+        const saved = JSON.parse(localStorage.getItem(STORAGE_KEYS.selection) || '[]');
+        return new Set(Array.isArray(saved) ? saved : []);
+      } catch {
+        return new Set();
+      }
+    }
+
+    function savePlayerSelection() {
+      localStorage.setItem(STORAGE_KEYS.selection, JSON.stringify([...selectedPlayerNames]));
+    }
+
+    function selectionKey(playerOrName) {
+      const name = typeof playerOrName === 'string' ? playerOrName : playerOrName?.nombre;
+      return AuthService.normalize(name);
+    }
+
+    function isPlayerSelected(playerOrName) {
+      return selectedPlayerNames.has(selectionKey(playerOrName));
+    }
+
+    function selectedPlayers() {
+      return players.filter(isPlayerSelected);
+    }
+
+    function escapeHtml(value) {
+      return String(value ?? '')
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#039;');
+    }
+
+    function isCurrentUser(playerOrName) {
+      const name = typeof playerOrName === 'string' ? playerOrName : playerOrName?.nombre;
+      return Boolean(currentSession && AuthService.normalize(name) === AuthService.normalize(currentSession.username));
+    }
+
+    function avg(...vals) {
+      const v = vals.filter(n => !isNaN(n));
+      return v.length ? v.reduce((a, b) => a + b, 0) / v.length : 1;
+    }
+
+    function roundStat(n) {
+      return Math.max(1, Math.min(5, Math.round(n)));
+    }
+
+    function defaultPlayer(nombre) {
+      const p = {
+        nombre,
+        posicion_1: 'MED',
+        posicion_2: 'DEL',
+        juega_arco: true,
+        edad: 30,
+        altura: 175,
+        pie_habil: 'Derecho',
+        foto_url: ''
+      };
+      STAT_FIELDS.forEach(f => { p[f] = 3; });
+      p.arquero = 1;
+      p.juega_arco = false;
+      return p;
+    }
+
+    function loadLocalPhotos() {
+      try { return JSON.parse(localStorage.getItem(STORAGE_KEYS.fotos) || '{}'); }
+      catch { return {}; }
+    }
+
+    function saveLocalPhoto(nombre, dataUrl) {
+      const all = loadLocalPhotos();
+      if (dataUrl) all[nombre] = dataUrl;
+      else delete all[nombre];
+      localStorage.setItem(STORAGE_KEYS.fotos, JSON.stringify(all));
+    }
+
+    function getPlayerPhoto(p) {
+      const url = p.foto_url || loadLocalPhotos()[p.nombre] || '';
+      return safePhotoUrl(url);
+    }
+
+    function safePhotoUrl(url) {
+      if (!url) return '';
+      if (url.startsWith('data:image/')) return url;
+      if (url.startsWith('http://') || url.startsWith('https://')) return url;
+      return '';
+    }
+
+    function applyLocalPhotos() {
+      const local = loadLocalPhotos();
+      players.forEach(p => {
+        if (!p.foto_url && local[p.nombre]) p.foto_url = local[p.nombre];
+      });
+    }
+
+    function resizeImageFile(file, maxSize) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+          const img = new Image();
+          img.onload = () => {
+            let w = img.width;
+            let h = img.height;
+            if (w > h) {
+              if (w > maxSize) { h = Math.round(h * maxSize / w); w = maxSize; }
+            } else if (h > maxSize) {
+              w = Math.round(w * maxSize / h);
+              h = maxSize;
+            }
+            const canvas = document.createElement('canvas');
+            canvas.width = w;
+            canvas.height = h;
+            canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+            const dataUrl = canvas.toDataURL('image/jpeg', 0.82);
+            resolve({
+              dataUrl,
+              base64: dataUrl.split(',')[1],
+              mimeType: 'image/jpeg'
+            });
+          };
+          img.onerror = reject;
+          img.src = reader.result;
+        };
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+    }
+
+    function updatePhotoPreview(url) {
+      const wrap = document.getElementById('photo-preview-wrap');
+      const img = document.getElementById('photo-preview');
+      if (!wrap || !img) return;
+      if (url) {
+        img.src = url;
+        wrap.classList.add('has-photo');
+      } else {
+        img.removeAttribute('src');
+        wrap.classList.remove('has-photo');
+      }
+    }
+
+    async function handlePhotoSelect(file) {
+      if (!file || !file.type.startsWith('image/')) return;
+      try {
+        pendingPhoto = await resizeImageFile(file, 400);
+        updatePhotoPreview(pendingPhoto.dataUrl);
+        updateModalPreview();
+      } catch {
+        alert('No se pudo cargar la imagen.');
+      }
+    }
+
+    function physicalBase(p) {
+      return {
+        velocidad: Number(p.vel_fis) || 3,
+        resistencia: Number(p.resistencia) || 3,
+        fuerza: Number(p.fuerza) || 3
+      };
+    }
+
+    function computeBaseCard(p) {
+      const phys = physicalBase(p);
+      return {
+        velocidad: phys.velocidad,
+        resistencia: phys.resistencia,
+        fuerza: phys.fuerza,
+        tiro: Number(p.remate) || 3,
+        pase: avg(Number(p.pase_corto) || 3, Number(p.pase_largo) || 3),
+        regate: Number(p.regate) || 3,
+        defensa: avg(Number(p.marca) || 3, Number(p.posicionamiento) || 3),
+        fisico: avg(phys.velocidad, phys.resistencia, phys.fuerza)
+      };
+    }
+
+    function arqueroRating(p) {
+      const peer = RatingsService.getPeerAverage(p.nombre);
+      if (peer.stats?.arquero != null) return roundStat(peer.stats.arquero);
+      return roundStat(Number(p.arquero) || 1);
+    }
+
+    function goalkeeperRating(p) {
+      return arqueroRating(p);
+    }
+
+    function hasGoalkeeperGloves(p) {
+      const rating = arqueroRating(p);
+      return rating >= GK_MIN_RATING && rating <= 5;
+    }
+
+    function isGoalkeeperCapable(p) {
+      return hasGoalkeeperGloves(p);
+    }
+
+    function glovesBadgeHtml(p) {
+      if (!hasGoalkeeperGloves(p)) return '';
+      const rating = arqueroRating(p);
+      return `<span class="fifa-gk-badge" title="Arquero ${rating}/5 · Guantes desde 3" aria-label="Arquero ${rating} de 5">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M7 4c-1.5 1.2-2.3 3-2.3 5.1V14c0 2.2 1.8 4 4 4h.4c.4-1.3 1.5-2.3 2.9-2.3s2.5 1 2.9 2.3H15c2.2 0 4-1.8 4-4V9.1C19 7 18.2 5.2 16.7 4H15v3.5c0 .8-.7 1.5-1.5 1.5S12 8.3 12 7.5V4h-2v3.5c0 .8-.7 1.5-1.5 1.5S7 8.3 7 7.5V4z"/>
+        </svg>
+      </span>`;
+    }
+
+    function computeCard(p) {
+      const base = computeBaseCard(p);
+      const peer = RatingsService.getPeerAverage(p.nombre);
+      const pick = (key, fallback) => (peer.count && peer.stats?.[key] != null ? peer.stats[key] : fallback);
+
+      const velocidad = pick('velocidad', base.velocidad);
+      const resistencia = pick('resistencia', base.resistencia);
+      const fuerza = pick('fuerza', base.fuerza);
+      const tiro = pick('tiro', base.tiro);
+      const pase = pick('pase', base.pase);
+      const regate = pick('regate', base.regate);
+      const defensa = pick('defensa', base.defensa);
+      const fisico = avg(velocidad, resistencia, fuerza);
+      const cardStats = [velocidad, tiro, pase, regate, defensa, fisico];
+
+      return {
+        velocidad,
+        resistencia,
+        fuerza,
+        tiro,
+        pase,
+        regate,
+        defensa,
+        fisico,
+        arquero: arqueroRating(p),
+        media: Math.round(avg(...cardStats) * 20),
+        cardStats,
+        physBreakdown: `Vel ${velocidad.toFixed(1)} · Res ${resistencia.toFixed(1)} · Fue ${fuerza.toFixed(1)}`,
+        ratingCount: peer.count,
+        usesPeerAverage: peer.count > 0
+      };
+    }
+
+    function tierClass(media) {
+      if (media >= 70) return 'tier-gold';
+      if (media >= 55) return 'tier-silver';
+      return 'tier-bronze';
+    }
+
+    function formatPosiciones(p) {
+      return [p.posicion_1, p.posicion_2].filter(Boolean).join(' · ');
+    }
+
+    function posicionesCardHtml(p) {
+      return `<div class="fifa-pos-wrap">
+        <span class="fifa-pos-main">${escapeHtml(p.posicion_1 || 'MED')}</span>
+        <span class="fifa-pos-sub">${escapeHtml(p.posicion_2 || 'DEL')}</span>
+      </div>`;
+    }
+
+    function buildFifaCardHtml(p, clickable) {
+      const c = computeCard(p);
+      const cls = tierClass(c.media);
+      const photo = getPlayerPhoto(p);
+      const photoHtml = photo
+        ? `<img class="fifa-card-photo" src="${escapeHtml(photo)}" alt="Foto de ${escapeHtml(p.nombre)}" loading="lazy">`
+        : `<div class="fifa-photo-placeholder" aria-label="Foto pendiente">${escapeHtml(String(p.nombre || '?').charAt(0))}</div>`;
+      const peerBadge = c.ratingCount
+        ? `<span class="fifa-peer">${c.ratingCount} voto${c.ratingCount === 1 ? '' : 's'}</span>`
+        : '<span class="fifa-peer">base</span>';
+      const selfBadge = isCurrentUser(p) ? '<span class="card-self-badge">Tu carta</span>' : '';
+      const selected = isPlayerSelected(p);
+      const selectionButton = clickable
+        ? `<button class="player-select-toggle ${selected ? 'selected' : ''}" type="button" aria-label="${selected ? 'Quitar' : 'Convocar'} a ${escapeHtml(p.nombre)}">${selected ? '✓' : '+'}</button>`
+        : '';
+      return `
+        <div class="fifa-card ${cls} ${selected ? 'selected' : ''}" ${clickable ? '' : ''}>
+          ${selectionButton}
+          ${selfBadge}
+          ${glovesBadgeHtml(p)}
+          ${photoHtml}
+          <div class="fifa-card-body">
+            ${peerBadge}
+            <div class="fifa-card-top">
+              <div class="fifa-ovr">${c.media}</div>
+              ${posicionesCardHtml(p)}
+            </div>
+            <div class="fifa-name">${escapeHtml(p.nombre)}</div>
+            <div class="fifa-stats">
+              ${CARD_LABELS.map((lbl, i) => {
+                const title = lbl === 'FÍS' ? c.physBreakdown : CARD_LABELS_FULL[i];
+                return `<div class="fifa-stat"><abbr title="${escapeHtml(title)}">${lbl}</abbr><span>${c.cardStats[i].toFixed(1)}</span></div>`;
+              }).join('')}
+            </div>
+            <div class="fifa-arq" title="Atributo aparte: no entra en la media general">ARQ ${c.arquero.toFixed(1)}</div>
+            <div class="fifa-meta">${p.edad}a · ${p.altura}cm · ${escapeHtml(p.pie_habil)}</div>
+            <div class="fifa-card-action">${isCurrentUser(p) ? 'Editar perfil' : 'Calificar jugador'}</div>
+          </div>
+        </div>`;
+    }
+
+    document.addEventListener('DOMContentLoaded', async () => {
+      initFormatButtons();
+      await loadPlayers();
+      initAuth();
+      document.getElementById('btn-armar').addEventListener('click', () => armarEquipos(false));
+      document.getElementById('btn-barajar').addEventListener('click', () => armarEquipos(true));
+      document.getElementById('modal-close').addEventListener('click', closeModal);
+      document.getElementById('modal-overlay').addEventListener('click', e => {
+        if (e.target.id === 'modal-overlay') closeModal();
+      });
+      document.getElementById('btn-save').addEventListener('click', () => savePlayer(editingIdx));
+      document.getElementById('btn-add-player').addEventListener('click', openCreateEditor);
+      document.getElementById('btn-clear-selection').addEventListener('click', clearPlayerSelection);
+      document.getElementById('peer-modal-close').addEventListener('click', closePeerModal);
+      document.getElementById('peer-modal-overlay').addEventListener('click', event => {
+        if (event.target.id === 'peer-modal-overlay') closePeerModal();
+      });
+      document.getElementById('btn-save-peer-rating').addEventListener('click', savePeerRating);
+      document.getElementById('btn-registrar-partido').addEventListener('click', registerCurrentMatch);
+      document.getElementById('btn-save-match-votes').addEventListener('click', saveMatchVotes);
+      document.getElementById('btn-logout').addEventListener('click', logout);
+    });
+
+    function populateLoginPlayers() {
+      const select = document.getElementById('login-player');
+      select.innerHTML = '<option value="">Elegí tu nombre</option>' +
+        players.map(player => {
+          const registered = AuthService.isRegisteredSync(player.nombre);
+          const suffix = registered ? ' ✓' : '';
+          return `<option value="${escapeHtml(player.nombre)}">${escapeHtml(player.nombre)}${suffix}</option>`;
+        }).join('');
+    }
+
+    function bindLoginPasswordInput() {
+      const input = document.getElementById('login-password');
+      input.addEventListener('input', () => {
+        input.value = input.value.replace(/\D/g, '').slice(0, AuthService.passwordLength);
+      });
+    }
+
+    function initAuth() {
+      populateLoginPlayers();
+      bindLoginPasswordInput();
+      currentSession = AuthService.getSession();
+      if (currentSession && players.some(player => isCurrentUser(player))) {
+        showAppSession();
+      } else {
+        if (currentSession) AuthService.logout();
+        currentSession = null;
+        document.getElementById('login-overlay').classList.remove('hidden');
+      }
+
+      const form = document.getElementById('login-form');
+      const playerSelect = document.getElementById('login-player');
+      playerSelect.addEventListener('change', updateLoginMode);
+      form.addEventListener('submit', handleLoginSubmit);
+      updateLoginMode();
+    }
+
+    async function updateLoginMode() {
+      const username = document.getElementById('login-player').value;
+      const button = document.getElementById('login-submit');
+      const message = document.getElementById('login-message');
+      const hint = document.getElementById('login-hint');
+      const passwordInput = document.getElementById('login-password');
+      message.textContent = '';
+      message.className = 'login-message';
+      passwordInput.value = '';
+
+      if (!username) {
+        button.textContent = 'Ingresar';
+        hint.textContent = 'Elegí tu jugador para continuar.';
+        hint.className = 'login-hint';
+        return;
+      }
+
+      const registered = await AuthService.isRegistered(username);
+      if (registered) {
+        button.textContent = 'Ingresar';
+        hint.textContent = 'Ya tenés cuenta. Ingresá tus 6 números.';
+        hint.className = 'login-hint';
+      } else {
+        button.textContent = 'Crear mi contraseña';
+        hint.textContent = 'Primera vez: elegí 6 números y recordalos. Van a quedar guardados para ingresar cuando quieras.';
+        hint.className = 'login-hint register';
+      }
+      passwordInput.focus();
+    }
+
+    async function handleLoginSubmit(event) {
+      event.preventDefault();
+      const username = document.getElementById('login-player').value;
+      const password = document.getElementById('login-password').value;
+      const message = document.getElementById('login-message');
+      const button = document.getElementById('login-submit');
+
+      if (!AuthService.isValidPasswordFormat(password)) {
+        message.textContent = `La contraseña debe tener ${AuthService.passwordLength} números`;
+        message.className = 'login-message error';
+        return;
+      }
+
+      message.textContent = 'Verificando…';
+      message.className = 'login-message';
+      button.disabled = true;
+      try {
+        const registered = await AuthService.isRegistered(username);
+        currentSession = registered
+          ? await AuthService.login(username, password)
+          : await AuthService.register(username, password);
+        document.getElementById('login-password').value = '';
+        if (!registered) {
+          message.textContent = 'Cuenta creada. Recordá tu contraseña de 6 dígitos.';
+          message.className = 'login-message success';
+          await new Promise(resolve => setTimeout(resolve, 1600));
+        }
+        populateLoginPlayers();
+        showAppSession();
+      } catch (error) {
+        message.textContent = error.message;
+        message.className = 'login-message error';
+      } finally {
+        button.disabled = false;
+        updateLoginMode();
+      }
+    }
+
+    function showAppSession() {
+      document.getElementById('login-overlay').classList.add('hidden');
+      document.getElementById('session-username').textContent = currentSession.username;
+      document.getElementById('session-bar').classList.add('visible');
+      renderGrid();
+      const latestMatch = RatingsService.listMatches()[0];
+      if (latestMatch) {
+        currentMatch = latestMatch;
+        renderMatchVoting(currentMatch);
+        document.getElementById('match-voting').classList.add('visible');
+      }
+      renderLatestNewspaper();
+    }
+
+    async function logout() {
+      await AuthService.logout();
+      currentSession = null;
+      currentMatch = null;
+      document.getElementById('session-bar').classList.remove('visible');
+      document.getElementById('match-voting').classList.remove('visible');
+      document.getElementById('login-overlay').classList.remove('hidden');
+      renderGrid();
+    }
+
+    function initFormatButtons() {
+      document.querySelectorAll('.format-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          document.querySelectorAll('.format-btn').forEach(b => b.classList.remove('active'));
+          btn.classList.add('active');
+          teamSize = Number(btn.dataset.size);
+          lastTopCombos = [];
+          currentCombo = null;
+          updateFormatWarning();
+          updateSelectionUI();
+        });
+      });
+      updateFormatWarning();
+    }
+
+    function updateFormatWarning() {
+      const needed = teamSize * 2;
+      const count = selectedPlayers().length;
+      const diff = count - needed;
+      const box = document.getElementById('format-warning');
+      if (diff === 0) { box.classList.remove('visible'); return; }
+      box.classList.add('visible');
+      if (count === 0) {
+        box.textContent = `Marcá los ${needed} jugadores confirmados para Fútbol ${teamSize}.`;
+      } else {
+        box.textContent = diff > 0
+          ? `Hay ${count} convocados. Quitá ${diff} para armar equipos de ${teamSize}.`
+          : `Hay ${count} convocados. Faltan ${Math.abs(diff)} para completar los ${needed}.`;
+      }
+    }
+
+    function updateSelectionUI() {
+      const needed = teamSize * 2;
+      const count = selectedPlayers().length;
+      const counter = document.getElementById('selection-count');
+      const buildButton = document.getElementById('btn-armar');
+
+      counter.textContent = `${count} de ${needed} convocados`;
+      counter.classList.toggle('complete', count === needed);
+      buildButton.disabled = count !== needed;
+      buildButton.textContent = count === needed
+        ? 'Armar equipos parejos'
+        : count < needed
+          ? `Seleccioná ${needed - count} más`
+          : `Quitá ${count - needed}`;
+      updateFormatWarning();
+    }
+
+    function togglePlayerSelection(player) {
+      const key = selectionKey(player);
+      const needed = teamSize * 2;
+
+      if (selectedPlayerNames.has(key)) {
+        selectedPlayerNames.delete(key);
+      } else {
+        if (selectedPlayers().length >= needed) {
+          const box = document.getElementById('format-warning');
+          box.textContent = `La convocatoria ya tiene ${needed} jugadores. Quitá uno antes de agregar otro.`;
+          box.classList.add('visible');
+          return;
+        }
+        selectedPlayerNames.add(key);
+      }
+
+      savePlayerSelection();
+      lastTopCombos = [];
+      currentCombo = null;
+      renderGrid();
+      updateSelectionUI();
+    }
+
+    function clearPlayerSelection() {
+      selectedPlayerNames.clear();
+      savePlayerSelection();
+      lastTopCombos = [];
+      currentCombo = null;
+      renderGrid();
+      updateSelectionUI();
+    }
+
+    async function loadPlayers() {
+      const status = document.getElementById('load-status');
+      status.textContent = 'Cargando jugadores…';
+      status.classList.remove('error');
+
+      try {
+        const result = await PlayerApi.listPlayers();
+        players = result.players.map(normalizePlayer);
+        applyLocalPhotos();
+        status.textContent = result.message;
+        if (result.offline) status.classList.add('error');
+      } catch {
+        players = APP_CONFIG.defaultPlayerNames.map(defaultPlayer);
+        applyLocalPhotos();
+        status.textContent = 'Sin conexión. Datos locales.';
+        status.classList.add('error');
+      }
+
+      const validKeys = new Set(players.map(selectionKey));
+      selectedPlayerNames = new Set([...selectedPlayerNames].filter(key => validKeys.has(key)));
+      savePlayerSelection();
+      renderGrid();
+      updateSelectionUI();
+    }
+
+    function normalizePlayer(p) {
+      const out = defaultPlayer(p.nombre || 'Jugador');
+      if (p.posicion && !p.posicion_1) {
+        out.posicion_1 = p.posicion;
+        out.posicion_2 = p.posicion_2 || (p.posicion === 'MED' ? 'DEL' : 'MED');
+      } else {
+        out.posicion_1 = p.posicion_1 || out.posicion_1;
+        out.posicion_2 = p.posicion_2 || out.posicion_2;
+      }
+      out.edad = Number(p.edad) || out.edad;
+      out.altura = Number(p.altura) || out.altura;
+      out.pie_habil = p.pie_habil || out.pie_habil;
+      out.foto_url = p.foto_url || '';
+      STAT_FIELDS.forEach(f => {
+        if (f === 'arquero') return;
+        out[f] = roundStat(Number(p[f]) || 3);
+      });
+      if (p.arquero != null && p.arquero !== '') {
+        out.arquero = roundStat(Number(p.arquero));
+      } else if (p.atajar != null || p.reflejos != null || p.salidas != null) {
+        out.arquero = roundStat(avg(Number(p.atajar) || 3, Number(p.reflejos) || 3, Number(p.salidas) || 3));
+      } else {
+        out.arquero = 1;
+      }
+      out.juega_arco = out.arquero >= GK_MIN_RATING;
+      return out;
+    }
+
+    function renderGrid() {
+      const grid = document.getElementById('players-grid');
+      grid.innerHTML = '';
+      players.forEach((p, idx) => {
+        const wrap = document.createElement('div');
+        wrap.innerHTML = buildFifaCardHtml(p, true);
+        const card = wrap.firstElementChild;
+        card.tabIndex = 0;
+        card.setAttribute('role', 'button');
+        card.setAttribute('aria-label', isCurrentUser(p)
+          ? `Editar tu carta: ${p.nombre}`
+          : `Calificar a ${p.nombre}`);
+        const selectionButton = card.querySelector('.player-select-toggle');
+        selectionButton?.addEventListener('click', event => {
+          event.stopPropagation();
+          togglePlayerSelection(p);
+        });
+        card.addEventListener('click', () => {
+          if (!currentSession) return;
+          if (isCurrentUser(p)) openEditor(idx);
+          else openPeerRating(idx);
+        });
+        card.addEventListener('keydown', event => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            card.click();
+          }
+        });
+        grid.appendChild(card);
+      });
+
+      const addCard = document.createElement('div');
+      addCard.className = 'fifa-card fifa-card-add';
+      addCard.innerHTML = '<span class="fifa-card-add-icon">+</span><span class="fifa-card-add-label">Nuevo jugador</span>';
+      addCard.addEventListener('click', openCreateEditor);
+      grid.appendChild(addCard);
+    }
+
+    function buildFormHtml(p, editableName) {
+      const nameField = editableName
+        ? `<div class="form-section">
+            <h4>Nombre</h4>
+            <div class="field field-full">
+              <input type="text" name="nombre" required maxlength="40" placeholder="Nombre del jugador" value="${p.nombre === 'Nuevo jugador' ? '' : escapeHtml(p.nombre)}">
+            </div>
+          </div>`
+        : '';
+
+      return `${nameField}
+        <div class="form-section photo-section">
+          <h4>Foto</h4>
+          <div class="photo-preview-wrap" id="photo-preview-wrap">
+            <img id="photo-preview" alt="">
+            <span class="photo-placeholder">Sin foto</span>
+          </div>
+          <label class="btn-photo">
+            Elegir foto
+            <input type="file" id="photo-input" accept="image/*" capture="user">
+          </label>
+          <p class="photo-hint">Desde la galería o cámara del celular</p>
+          <div class="field field-full" style="margin-top:0.65rem">
+            <label>Link de imagen (opcional)</label>
+            <input type="url" name="foto_url" placeholder="https://..." value="${escapeHtml(p.foto_url || '')}">
+          </div>
+        </div>
+        <div class="form-section">
+          <h4>Datos personales</h4>
+          <div class="form-grid cols-3">
+            <div class="field"><label>Edad</label><input type="number" name="edad" min="15" max="60" value="${p.edad}"></div>
+            <div class="field"><label>Altura (cm)</label><input type="number" name="altura" min="150" max="210" value="${p.altura}"></div>
+            <div class="field"><label>Pie hábil</label>
+              <select name="pie_habil">${PIES.map(x => `<option ${p.pie_habil === x ? 'selected' : ''}>${x}</option>`).join('')}</select>
+            </div>
+          </div>
+        </div>
+        <div class="form-section">
+          <h4>Posiciones</h4>
+          <p class="peer-note">Elegí los dos puestos donde jugás en cancha. Solo vos podés cambiarlos.</p>
+          <div class="form-grid">
+            <div class="field">
+              <label>Puesto 1</label>
+              <select name="posicion_1">${POSICIONES_CAMPO.map(x =>
+                `<option ${p.posicion_1 === x ? 'selected' : ''}>${x}</option>`).join('')}</select>
+            </div>
+            <div class="field">
+              <label>Puesto 2</label>
+              <select name="posicion_2">${POSICIONES_CAMPO.map(x =>
+                `<option ${p.posicion_2 === x ? 'selected' : ''}>${x}</option>`).join('')}</select>
+            </div>
+          </div>
+        </div>
+        <div class="peer-note">
+          Los atributos de la carta los califican los demás jugadores. Vos solo editás posiciones, foto y datos personales.
+        </div>`;
+    }
+
+    function bindFormEvents() {
+      const form = document.getElementById('player-form');
+      form.querySelectorAll('input[type=number][data-stat]').forEach(input => {
+        input.addEventListener('input', updateModalPreview);
+        input.addEventListener('change', updateModalPreview);
+      });
+      form.querySelectorAll('select, input:not([data-stat]):not([type=file])').forEach(el => {
+        el.addEventListener('input', updateModalPreview);
+        el.addEventListener('change', updateModalPreview);
+      });
+      const photoInput = form.querySelector('#photo-input');
+      if (photoInput) {
+        photoInput.addEventListener('change', e => {
+          const file = e.target.files && e.target.files[0];
+          if (file) handlePhotoSelect(file);
+          e.target.value = '';
+        });
+      }
+    }
+
+    function initPhotoInForm(p) {
+      pendingPhoto = null;
+      updatePhotoPreview(getPlayerPhoto(p));
+    }
+
+    function openCreateEditor() {
+      isCreating = true;
+      editingIdx = -1;
+      const p = defaultPlayer('Nuevo jugador');
+      document.getElementById('modal-title').textContent = 'Nuevo jugador';
+      document.getElementById('btn-save').textContent = 'Crear jugador';
+      document.getElementById('modal-preview').innerHTML = buildFifaCardHtml(p, false);
+      document.getElementById('modal-save-status').textContent = '';
+      document.getElementById('modal-save-status').className = 'save-status';
+      document.getElementById('player-form').innerHTML = buildFormHtml(p, true);
+      bindFormEvents();
+      initPhotoInForm(p);
+      document.getElementById('modal-overlay').classList.add('open');
+      document.querySelector('[name=nombre]')?.focus();
+    }
+
+    function openEditor(idx) {
+      isCreating = false;
+      editingIdx = idx;
+      const p = players[idx];
+      document.getElementById('modal-title').textContent = p.nombre;
+      document.getElementById('btn-save').textContent = 'Guardar cambios';
+      document.getElementById('modal-preview').innerHTML = buildFifaCardHtml(p, false);
+      document.getElementById('modal-save-status').textContent = '';
+      document.getElementById('modal-save-status').className = 'save-status';
+      document.getElementById('player-form').innerHTML = buildFormHtml(p, false);
+      bindFormEvents();
+      initPhotoInForm(p);
+      document.getElementById('modal-overlay').classList.add('open');
+    }
+
+    function statField(key, label, p) {
+      return `<div class="field"><label>${label}</label>
+        <input type="number" name="${key}" data-stat min="1" max="5" step="1" value="${p[key]}"></div>`;
+    }
+
+    function readFormData() {
+      const form = document.getElementById('player-form');
+      const base = isCreating
+        ? defaultPlayer('')
+        : { ...players[editingIdx] };
+
+      const nameInput = form.querySelector('[name=nombre]');
+      base.nombre = nameInput
+        ? String(nameInput.value || '').trim()
+        : players[editingIdx].nombre;
+
+      base.edad = Number(form.querySelector('[name=edad]').value) || 30;
+      base.altura = Number(form.querySelector('[name=altura]').value) || 175;
+      base.pie_habil = form.querySelector('[name=pie_habil]').value;
+      base.posicion_1 = form.querySelector('[name=posicion_1]').value;
+      base.posicion_2 = form.querySelector('[name=posicion_2]').value;
+      base.foto_url = String(form.querySelector('[name=foto_url]')?.value || '').trim();
+      if (pendingPhoto) base.foto_url = pendingPhoto.dataUrl;
+      STAT_FIELDS.forEach(f => {
+        const input = form.querySelector(`[name=${f}]`);
+        if (input) {
+          const value = roundStat(Number(input.value));
+          base[f] = value;
+          input.value = value;
+        } else if (base[f] == null) {
+          base[f] = 3;
+        }
+      });
+      return base;
+    }
+
+    function updateModalPreview() {
+      if (editingIdx < 0 && !isCreating) return;
+      const merged = isCreating
+        ? readFormData()
+        : { ...players[editingIdx], ...readFormData() };
+      if (!merged.nombre) merged.nombre = 'Nuevo jugador';
+      document.getElementById('modal-preview').innerHTML = buildFifaCardHtml(merged, false);
+    }
+
+    function closeModal() {
+      document.getElementById('modal-overlay').classList.remove('open');
+      editingIdx = -1;
+      isCreating = false;
+      pendingPhoto = null;
+      document.getElementById('btn-save').textContent = 'Guardar cambios';
+    }
+
+    const PEER_LABELS = {
+      velocidad: 'Velocidad',
+      resistencia: 'Resistencia',
+      fuerza: 'Fuerza',
+      tiro: 'Remate',
+      pase: 'Pase',
+      regate: 'Regate',
+      defensa: 'Defensa',
+      arquero: 'Arquero'
+    };
+
+    const PEER_GROUPS = [
+      { title: 'Físico', keys: ['velocidad', 'resistencia', 'fuerza'] },
+      { title: 'Técnico', keys: ['regate', 'pase', 'tiro'] },
+      { title: 'Defensivo', keys: ['defensa'] },
+      { title: 'Arquero', keys: ['arquero'], note: 'Atributo aparte: no suma en la media general. Con 3, 4 o 5 aparecen guantes en la carta.' }
+    ];
+
+    function peerRatingDefault(key, player, existing, base) {
+      if (existing?.[key] != null) return Math.round(existing[key]);
+      if (key === 'arquero') return Math.round(Number(player.arquero) || 1);
+      if (base[key] != null) return Math.round(base[key]);
+      return 3;
+    }
+
+    function buildPeerRatingRow(key, player, existing, base) {
+      const selected = peerRatingDefault(key, player, existing, base);
+      return `<div class="rating-row">
+        <span class="rating-label">${PEER_LABELS[key]}</span>
+        ${[1, 2, 3, 4, 5].map(value => `
+          <label class="rating-choice">
+            <input type="radio" name="peer_${key}" value="${value}" ${selected === value ? 'checked' : ''}>
+            <span>${value}</span>
+          </label>`).join('')}
+      </div>`;
+    }
+
+    function openPeerRating(idx) {
+      if (!currentSession || isCurrentUser(players[idx])) return;
+      peerRatingIdx = idx;
+      const player = players[idx];
+      const existing = RatingsService.getMyPeerRating(currentSession.username, player.nombre);
+      const base = computeBaseCard(player);
+
+      document.getElementById('peer-modal-title').textContent = `Calificar a ${player.nombre}`;
+      document.getElementById('peer-modal-preview').innerHTML = buildFifaCardHtml(player, false);
+      document.getElementById('peer-save-status').textContent = '';
+      document.getElementById('peer-save-status').className = 'save-status';
+      document.getElementById('peer-rating-form').innerHTML = PEER_GROUPS.map(group => `
+        <div class="peer-group-title">${group.title}</div>
+        ${group.note ? `<p class="peer-note">${group.note}</p>` : ''}
+        ${group.keys.map(key => buildPeerRatingRow(key, player, existing, base)).join('')}
+      `).join('');
+      document.getElementById('peer-modal-overlay').classList.add('open');
+    }
+
+    function closePeerModal() {
+      document.getElementById('peer-modal-overlay').classList.remove('open');
+      peerRatingIdx = -1;
+    }
+
+    function savePeerRating() {
+      if (peerRatingIdx < 0 || !currentSession) return;
+      const player = players[peerRatingIdx];
+      const form = document.getElementById('peer-rating-form');
+      const stats = {};
+      RatingsService.cardKeys.forEach(key => {
+        stats[key] = Number(form.querySelector(`[name=peer_${key}]:checked`)?.value ||
+          (key === 'arquero' ? 1 : 3));
+      });
+
+      const status = document.getElementById('peer-save-status');
+      try {
+        RatingsService.savePeerRating(currentSession.username, player.nombre, stats);
+        status.textContent = 'guardado';
+        status.className = 'save-status saved';
+        renderGrid();
+        if (currentCombo) renderResults(currentCombo);
+        document.getElementById('peer-modal-preview').innerHTML = buildFifaCardHtml(player, false);
+      } catch (error) {
+        status.textContent = error.message;
+        status.className = 'save-status error';
+      }
+    }
+
+    function playerExists(nombre, excludeIdx) {
+      const n = nombre.trim().toLowerCase();
+      return players.some((p, i) => i !== excludeIdx && p.nombre.trim().toLowerCase() === n);
+    }
+
+    async function savePlayer(idx) {
+      const statusEl = document.getElementById('modal-save-status');
+      let data = readFormData();
+
+      if (isCreating) {
+        if (!data.nombre) {
+          statusEl.textContent = 'falta nombre';
+          statusEl.className = 'save-status error';
+          return;
+        }
+        if (playerExists(data.nombre, -1)) {
+          statusEl.textContent = 'ya existe';
+          statusEl.className = 'save-status error';
+          return;
+        }
+      } else if (idx < 0) {
+        return;
+      }
+
+      statusEl.textContent = 'guardando…';
+      statusEl.className = 'save-status saving';
+
+      try {
+        if (isCreating) {
+          const initialData = pendingPhoto ? { ...data, foto_url: '' } : data;
+          await PlayerApi.savePlayer(initialData, { create: true });
+          if (pendingPhoto) {
+            const fotoUrl = await PlayerApi.uploadPhoto(data.nombre, pendingPhoto);
+            if (fotoUrl) data.foto_url = fotoUrl;
+            pendingPhoto = null;
+            await PlayerApi.savePlayer(data, { create: false });
+          }
+        } else {
+          if (pendingPhoto) {
+            const fotoUrl = await PlayerApi.uploadPhoto(data.nombre, pendingPhoto);
+            if (fotoUrl) data.foto_url = fotoUrl;
+            pendingPhoto = null;
+          }
+          await PlayerApi.savePlayer(data, { create: false });
+        }
+
+        if (isCreating) {
+          players.push(data);
+          editingIdx = players.length - 1;
+          isCreating = false;
+          document.getElementById('modal-title').textContent = data.nombre;
+          document.getElementById('btn-save').textContent = 'Guardar cambios';
+        } else {
+          Object.assign(players[idx], data);
+        }
+
+        if (PlayerApi.isLocal() && data.foto_url) {
+          saveLocalPhoto(data.nombre, data.foto_url);
+        }
+
+        statusEl.textContent = 'guardado';
+        statusEl.className = 'save-status saved';
+      } catch {
+        statusEl.textContent = 'error';
+        statusEl.className = 'save-status error';
+      }
+
+      renderGrid();
+      updateSelectionUI();
+      if (editingIdx >= 0) initPhotoInForm(players[editingIdx]);
+      updateModalPreview();
+    }
+
+    function playerPlaysRole(p, role) {
+      const positions = [p.posicion_1, p.posicion_2];
+      if (role === 'DEF') return positions.some(pos => pos === 'DEF' || pos === 'LIB');
+      if (role === 'MED') return positions.some(pos => pos === 'MED');
+      if (role === 'DEL') return positions.some(pos => pos === 'DEL');
+      return false;
+    }
+
+    function formationsForTeamSize(size) {
+      return OUTFIELD_FORMATIONS[size - 1] || OUTFIELD_FORMATIONS[6];
+    }
+
+    function matchFormationPenalty(outfieldPlayers, formation) {
+      const slots = [
+        ...Array(formation.def).fill('DEF'),
+        ...Array(formation.med).fill('MED'),
+        ...Array(formation.del).fill('DEL')
+      ];
+      const used = new Set();
+      let penalty = 0;
+
+      slots.forEach(slot => {
+        const idx = outfieldPlayers.findIndex((player, index) =>
+          !used.has(index) && playerPlaysRole(player, slot)
+        );
+        if (idx >= 0) {
+          used.add(idx);
+          return;
+        }
+        const fallbackIdx = outfieldPlayers.findIndex((_, index) => !used.has(index));
+        if (fallbackIdx >= 0) {
+          used.add(fallbackIdx);
+          penalty += 14;
+        } else {
+          penalty += 24;
+        }
+      });
+
+      return penalty;
+    }
+
+    function bestTeamFormation(team) {
+      const gkCandidates = team
+        .filter(isGoalkeeperCapable)
+        .sort((a, b) => goalkeeperRating(b) - goalkeeperRating(a));
+      const formations = formationsForTeamSize(team.length);
+      let best = { penalty: Infinity, gk: null, formation: null, roles: {} };
+
+      if (!gkCandidates.length) {
+        return { penalty: 90, gk: null, formation: null, roles: {} };
+      }
+
+      gkCandidates.slice(0, 3).forEach(gk => {
+        const outfield = team.filter(player => player !== gk);
+        formations.forEach(formation => {
+          const penalty = matchFormationPenalty(outfield, formation);
+          if (penalty < best.penalty) {
+            best = { penalty, gk, formation, roles: assignTeamRoles(team, gk, formation) };
+          }
+        });
+      });
+
+      return best;
+    }
+
+    function assignTeamRoles(team, gk, formation) {
+      const roles = {};
+      roles[selectionKey(gk)] = 'ARQ';
+      const outfield = team.filter(player => player !== gk);
+      const slots = [
+        ...Array(formation.def).fill('DEF'),
+        ...Array(formation.med).fill('MED'),
+        ...Array(formation.del).fill('DEL')
+      ];
+      const used = new Set();
+
+      slots.forEach(slot => {
+        let idx = outfield.findIndex((player, index) =>
+          !used.has(index) && playerPlaysRole(player, slot)
+        );
+        if (idx < 0) {
+          idx = outfield.findIndex((_, index) => !used.has(index));
+        }
+        if (idx >= 0) {
+          used.add(idx);
+          roles[selectionKey(outfield[idx])] = slot;
+        }
+      });
+
+      return roles;
+    }
+
+    function teamFormationPenalty(team) {
+      return bestTeamFormation(team).penalty;
+    }
+
+    function getBalanceValue(p, attr) {
+      return computeCard(p)[attr];
+    }
+
+    function teamAverage(team, attr) {
+      if (!team.length) return 0;
+      return team.reduce((s, p) => s + getBalanceValue(p, attr), 0) / team.length;
+    }
+
+    function shuffle(arr) {
+      const a = arr.slice();
+      for (let i = a.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [a[i], a[j]] = [a[j], a[i]];
+      }
+      return a;
+    }
+
+    function comboCost(teamA, teamB) {
+      let cost = 0;
+      for (const attr of BALANCE_ATTRS) {
+        cost += Math.abs(teamAverage(teamA, attr) - teamAverage(teamB, attr)) * BALANCE_WEIGHTS[attr];
+      }
+
+      cost += teamFormationPenalty(teamA) + teamFormationPenalty(teamB);
+
+      const gkA = bestTeamFormation(teamA).gk;
+      const gkB = bestTeamFormation(teamB).gk;
+      if (gkA && gkB) {
+        cost += Math.abs(goalkeeperRating(gkA) - goalkeeperRating(gkB)) * 0.8;
+      }
+
+      return cost;
+    }
+
+    function effectiveTeamSize() {
+      return selectedPlayers().length === teamSize * 2 ? teamSize : 0;
+    }
+
+    function findBestCombos() {
+      const n = effectiveTeamSize();
+      if (n < 1) return [];
+      const results = [];
+      const pool = selectedPlayers();
+      for (let i = 0; i < ITERATIONS; i++) {
+        const shuffled = shuffle(pool);
+        const teamA = shuffled.slice(0, n);
+        const teamB = shuffled.slice(n, n * 2);
+        results.push({ teamA, teamB, sobrantes: [], cost: comboCost(teamA, teamB) });
+      }
+      const unique = new Map();
+      results.forEach(result => {
+        const sides = [result.teamA, result.teamB]
+          .map(team => team.map(selectionKey).sort().join('|'))
+          .sort();
+        const signature = sides.join('::');
+        if (!unique.has(signature)) unique.set(signature, result);
+      });
+      return [...unique.values()].sort((a, b) => a.cost - b.cost).slice(0, TOP_N);
+    }
+
+    function armarEquipos(rebarajar) {
+      if (effectiveTeamSize() < 1) return;
+      let combo;
+      if (rebarajar && lastTopCombos.length) {
+        combo = lastTopCombos[Math.floor(Math.random() * lastTopCombos.length)];
+      } else {
+        lastTopCombos = findBestCombos();
+        combo = lastTopCombos[Math.floor(Math.random() * lastTopCombos.length)];
+      }
+      currentCombo = combo;
+      renderResults(combo);
+      document.getElementById('results').classList.add('visible');
+      document.getElementById('btn-barajar').disabled = false;
+    }
+
+    function renderResults({ teamA, teamB, sobrantes, cost }) {
+      const planA = bestTeamFormation(teamA);
+      const planB = bestTeamFormation(teamB);
+      fillTeamList('team-claro-list', teamA, planA.roles);
+      fillTeamList('team-oscuro-list', teamB, planB.roles);
+      const sobEl = document.getElementById('sobrantes-info');
+      sobEl.textContent = sobrantes.length
+        ? `Fuera: ${sobrantes.map(p => p.nombre).join(', ')}`
+        : '';
+      drawRadar(teamA, teamB);
+      const diffs = CARD_ATTRS.map((a, i) => {
+        const d = Math.abs(teamAverage(teamA, a) - teamAverage(teamB, a)).toFixed(2);
+        return `${CARD_LABELS_FULL[i]}: ${d}`;
+      });
+      const formA = planA.formation ? `${planA.formation.def}-${planA.formation.med}-${planA.formation.del}` : '—';
+      const formB = planB.formation ? `${planB.formation.def}-${planB.formation.med}-${planB.formation.del}` : '—';
+      document.getElementById('cost-info').textContent =
+        `Costo: ${cost.toFixed(3)} · Formación Claro ${formA} · Oscuro ${formB} · ${diffs.join(' · ')} · Arquero: ${Math.abs((planA.gk ? goalkeeperRating(planA.gk) : 0) - (planB.gk ? goalkeeperRating(planB.gk) : 0)).toFixed(2)}`;
+    }
+
+    function fillTeamList(id, team, roles = {}) {
+      document.getElementById(id).innerHTML = team.map(p => {
+        const c = computeCard(p);
+        const role = roles[selectionKey(p)] || '';
+        const roleLabel = role ? `${role} · ` : '';
+        return `<li><span>${escapeHtml(p.nombre)} <small class="team-ovr">${escapeHtml(roleLabel)}${escapeHtml(formatPosiciones(p))}</small></span><span class="team-ovr">${c.media}</span></li>`;
+      }).join('');
+    }
+
+    function registerCurrentMatch() {
+      if (!currentCombo || !currentSession) return;
+      currentMatch = RatingsService.createMatch({
+        format: teamSize,
+        teamClaro: currentCombo.teamA,
+        teamOscuro: currentCombo.teamB
+      });
+      renderMatchVoting(currentMatch);
+      document.getElementById('match-voting').classList.add('visible');
+      document.getElementById('match-voting').scrollIntoView({ behavior: 'smooth' });
+    }
+
+    function renderMatchVoting(match) {
+      const participants = [...match.teamClaro, ...match.teamOscuro];
+      const ownVotes = RatingsService.getMyMatchVotes(match.id, currentSession.username);
+      const list = document.getElementById('match-vote-list');
+
+      list.innerHTML = participants
+        .filter(name => !isCurrentUser(name))
+        .map(name => {
+          const player = players.find(item => AuthService.normalize(item.nombre) === AuthService.normalize(name));
+          const existing = ownVotes[AuthService.normalize(name)]?.score || 3;
+          return `<div class="match-player-row">
+            <div class="match-player-info">
+              <strong>${escapeHtml(name)}</strong>
+              <small>${escapeHtml(player ? formatPosiciones(player) : '')}</small>
+            </div>
+            ${[1, 2, 3, 4, 5].map(value => {
+              const trend = value < 3 ? 'down' : value === 3 ? 'flat' : 'up';
+              const arrow = value < 3 ? '↓' : value === 3 ? '→' : '↑';
+              return `<label class="performance-choice ${trend}">
+                <input type="radio" name="match_${escapeHtml(name)}" data-player="${escapeHtml(name)}" value="${value}" ${existing === value ? 'checked' : ''}>
+                <span>${arrow}${value}</span>
+              </label>`;
+            }).join('')}
+          </div>`;
+        }).join('');
+    }
+
+    function saveMatchVotes() {
+      if (!currentMatch || !currentSession) return;
+      const rows = document.querySelectorAll('#match-vote-list .match-player-row');
+      rows.forEach(row => {
+        const selected = row.querySelector('input[type=radio]:checked');
+        if (selected) {
+          RatingsService.saveMatchVote(
+            currentMatch.id,
+            currentSession.username,
+            selected.dataset.player,
+            Number(selected.value)
+          );
+        }
+      });
+      const status = document.getElementById('match-vote-status');
+      const voteCount = RatingsService.getMatchVoteCount(currentMatch.id);
+      const minVotes = RatingsService.minVotesForNewspaper;
+      status.className = 'load-status';
+
+      if (voteCount >= minVotes) {
+        status.textContent = `Votos guardados · Periódico publicado (${voteCount} votos)`;
+        renderNewspaper(currentMatch);
+        document.getElementById('newspaper-section').scrollIntoView({ behavior: 'smooth' });
+      } else {
+        status.textContent = `Votos guardados · Faltan ${minVotes - voteCount} votos para publicar el periódico (${voteCount}/${minVotes})`;
+        renderNewspaper(currentMatch);
+      }
+    }
+
+    function arrowFor(trend) {
+      if (trend === 'down') return '▼';
+      if (trend === 'up') return '▲';
+      return '●';
+    }
+
+    function renderNewspaper(match) {
+      const edition = RatingsService.buildNewspaper(match);
+      const section = document.getElementById('newspaper-section');
+      const newspaper = document.getElementById('newspaper');
+      const minVotes = RatingsService.minVotesForNewspaper;
+      const voteCount = RatingsService.getMatchVoteCount(match.id);
+
+      if (!edition) {
+        if (voteCount > 0) {
+          newspaper.innerHTML = `
+            <div class="paper-masthead">
+              <div class="paper-brand">El Tercer Tiempo</div>
+              <div class="paper-date">Edición en preparación</div>
+            </div>
+            <p class="paper-deck">Periódico pendiente: ${voteCount}/${minVotes} votos registrados.</p>`;
+          section.classList.add('visible');
+        } else {
+          section.classList.remove('visible');
+        }
+        return;
+      }
+
+      const articles = edition.articles.map(article => `
+        <p class="paper-article"><strong>${escapeHtml(article.playerName)} (${article.average.toFixed(1)}).</strong> ${escapeHtml(article.text)}</p>
+      `).join('');
+      const ratings = edition.articles.map(article => `
+        <div class="paper-rating-row">
+          <span class="trend-${article.arrow}">${arrowFor(article.arrow)}</span>
+          <span>${escapeHtml(article.playerName)}</span>
+          <strong>${article.average.toFixed(1)}</strong>
+        </div>
+      `).join('');
+
+      document.getElementById('newspaper').innerHTML = `
+        <div class="paper-masthead">
+          <div class="paper-brand">El Tercer Tiempo</div>
+          <div class="paper-date">${escapeHtml(edition.kicker)}</div>
+        </div>
+        <div class="paper-kicker">Crónica de la fecha</div>
+        <h2 class="paper-headline">${escapeHtml(edition.headline)}</h2>
+        <p class="paper-deck">${escapeHtml(edition.deck)}</p>
+        <div class="paper-grid">
+          <div class="paper-lead">${articles}</div>
+          <aside class="paper-ratings">
+            <h4>El boletín</h4>
+            ${ratings}
+          </aside>
+        </div>`;
+      section.classList.add('visible');
+    }
+
+    function renderLatestNewspaper() {
+      const section = document.getElementById('newspaper-section');
+      const latest = RatingsService.listMatches().find(match =>
+        RatingsService.getMatchVoteCount(match.id) > 0
+      );
+      if (!latest) {
+        section.classList.remove('visible');
+        return;
+      }
+      renderNewspaper(latest);
+    }
+
+    function drawRadar(teamA, teamB) {
+      const svg = document.getElementById('radar-svg');
+      const cx = 150, cy = 150, maxR = 110;
+      const minVal = 1, maxVal = 5;
+      const n = CARD_ATTRS.length;
+
+      function pointFor(value, i) {
+        const angle = (Math.PI * 2 * i / n) - Math.PI / 2;
+        const r = ((value - minVal) / (maxVal - minVal)) * maxR;
+        return { x: cx + r * Math.cos(angle), y: cy + r * Math.sin(angle) };
+      }
+
+      function poly(team) {
+        return CARD_ATTRS.map((a, i) => {
+          const pt = pointFor(teamAverage(team, a), i);
+          return `${pt.x},${pt.y}`;
+        }).join(' ');
+      }
+
+      let html = '';
+      for (let level = 1; level <= 5; level++) {
+        html += `<polygon points="${CARD_ATTRS.map((_, i) => { const p = pointFor(level, i); return `${p.x},${p.y}`; }).join(' ')}" fill="none" stroke="rgba(255,255,255,0.1)" stroke-width="1"/>`;
+      }
+      CARD_ATTRS.forEach((_, i) => {
+        const outer = pointFor(maxVal, i);
+        html += `<line x1="${cx}" y1="${cy}" x2="${outer.x}" y2="${outer.y}" stroke="rgba(255,255,255,0.15)" stroke-width="1"/>`;
+        const lbl = pointFor(maxVal + 0.55, i);
+        html += `<text x="${lbl.x}" y="${lbl.y}" text-anchor="middle" dominant-baseline="middle" fill="#a8b5a8" font-size="10">${CARD_LABELS_FULL[i]}</text>`;
+      });
+      html += `<polygon points="${poly(teamB)}" fill="rgba(74,111,165,0.45)" stroke="#3d5a80" stroke-width="2"/>`;
+      html += `<polygon points="${poly(teamA)}" fill="rgba(245,230,200,0.4)" stroke="#d4b896" stroke-width="2"/>`;
+      svg.innerHTML = html;
+    }
+  </script>
+</body>
+</html>
+
+
+
+================================================================================
+ ARCHIVO: Code.gs
+================================================================================
+
+/**
+ * 3er tiempo — Backend Google Apps Script
+ * Columnas (fila 1):
+ * Nombre | Posicion_1 | Posicion_2 | Juega_arco |
+ * Edad | Altura | Pie_habil |
+ * Vel_fis | Resistencia | Fuerza |
+ * Regate | Pase_corto | Pase_largo | Posicionamiento | Remate |
+ * Marca | Arquero | Foto_url
+ *
+ * Juega_arco: 1 = sí, 0 = no (todos rotan, por defecto 1)
+ */
+
+var SHEET_NAME = 'Jugadores';
+var FOTOS_FOLDER_NAME = '3ertiempo-fotos';
+
+var STAT_FIELDS = [
+  'vel_fis', 'resistencia', 'fuerza',
+  'regate', 'pase_corto', 'pase_largo', 'posicionamiento', 'remate',
+  'marca', 'arquero'
+];
+
+var CURRENT_HEADERS = [
+  'Nombre', 'Posicion_1', 'Posicion_2', 'Juega_arco',
+  'Edad', 'Altura', 'Pie_habil',
+  'Vel_fis', 'Resistencia', 'Fuerza',
+  'Regate', 'Pase_corto', 'Pase_largo', 'Posicionamiento', 'Remate',
+  'Marca', 'Arquero', 'Foto_url'
+];
+
+var COL_NEW = {
+  nombre: 0,
+  posicion_1: 1,
+  posicion_2: 2,
+  juega_arco: 3,
+  edad: 4,
+  altura: 5,
+  pie_habil: 6,
+  vel_fis: 7,
+  resistencia: 8,
+  fuerza: 9,
+  regate: 10,
+  pase_corto: 11,
+  pase_largo: 12,
+  posicionamiento: 13,
+  remate: 14,
+  marca: 15,
+  arquero: 16,
+  foto_url: 17
+};
+
+var COL_LEGACY = {
+  nombre: 0,
+  posicion: 1,
+  edad: 2,
+  altura: 3,
+  pie_habil: 4,
+  vel_fis: 5,
+  resistencia: 6,
+  fuerza: 7,
+  regate: 8,
+  pase_corto: 9,
+  pase_largo: 10,
+  posicionamiento: 11,
+  remate: 12,
+  marca: 13,
+  atajar: 14,
+  reflejos: 15,
+  salidas: 16,
+  foto_url: 17
+};
+
+function getSheet_() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  return ss.getSheetByName(SHEET_NAME) || ss.getSheets()[0];
+}
+
+function isLegacyFormat_(headers) {
+  var h = headers.map(function(x) { return String(x).toLowerCase().trim(); });
+  return h.indexOf('posicion_1') < 0;
+}
+
+function hasOldGoalkeeperFields_(headers) {
+  var h = headers.map(function(x) { return String(x).toLowerCase().trim(); });
+  return h.indexOf('atajar') >= 0;
+}
+
+function readStat_(row, col, key) {
+  var val = Number(row[col[key]]);
+  if (isNaN(val) || val < 1) return 1;
+  if (val > 5) return 5;
+  return Math.round(val);
+}
+
+function readBoolArco_(val) {
+  if (val === true || val === 1 || val === '1') return true;
+  var s = String(val || '').toLowerCase().trim();
+  return s === 'si' || s === 'sí' || s === 'true' || s === 'x';
+}
+
+function rowToPlayer_(row, legacy, oldGoalkeeperFields) {
+  var COL = legacy ? COL_LEGACY : COL_NEW;
+  var nombre = String(row[COL.nombre] || '').trim();
+  if (!nombre) return null;
+
+  var pos1 = legacy
+    ? String(row[COL.posicion] || 'MED').trim()
+    : String(row[COL.posicion_1] || 'MED').trim();
+  var pos2 = legacy
+    ? pos1
+    : String(row[COL.posicion_2] || 'DEL').trim();
+
+  var player = {
+    nombre: nombre,
+    posicion_1: pos1,
+    posicion_2: pos2,
+    juega_arco: legacy ? true : readBoolArco_(row[COL.juega_arco] !== false ? row[COL.juega_arco] : 1),
+    edad: Number(row[COL.edad]) || 30,
+    altura: Number(row[COL.altura]) || 175,
+    pie_habil: String(row[COL.pie_habil] || 'Derecho').trim(),
+    foto_url: String(row[legacy ? COL_LEGACY.foto_url : (oldGoalkeeperFields ? 19 : COL_NEW.foto_url)] || '').trim()
+  };
+
+  for (var i = 0; i < STAT_FIELDS.length; i++) {
+    if (STAT_FIELDS[i] !== 'arquero') {
+      player[STAT_FIELDS[i]] = readStat_(row, COL, STAT_FIELDS[i]);
+    }
+  }
+
+  player.arquero = oldGoalkeeperFields
+    ? Math.round((
+        Number(row[legacy ? COL_LEGACY.atajar : 16]) +
+        Number(row[legacy ? COL_LEGACY.reflejos : 17]) +
+        Number(row[legacy ? COL_LEGACY.salidas : 18])
+      ) / 3) || 3
+    : readStat_(row, COL, 'arquero');
+
+  return player;
+}
+
+function doGet(e) {
+  var sheet = getSheet_();
+  var data = sheet.getDataRange().getValues();
+  var legacy = isLegacyFormat_(data[0] || []);
+  var oldGoalkeeperFields = hasOldGoalkeeperFields_(data[0] || []);
+  var players = [];
+
+  for (var i = 1; i < data.length; i++) {
+    var player = rowToPlayer_(data[i], legacy, oldGoalkeeperFields);
+    if (player) players.push(player);
+  }
+
+  return ContentService
+    .createTextOutput(JSON.stringify({ ok: true, players: players }))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
+function buildRowValues_(body) {
+  var rowValues = [
+    String(body.nombre || '').trim(),
+    String(body.posicion_1 || 'MED').trim(),
+    String(body.posicion_2 || 'DEL').trim(),
+    body.juega_arco ? 1 : 0,
+    Number(body.edad) || 30,
+    Number(body.altura) || 175,
+    String(body.pie_habil || 'Derecho').trim()
+  ];
+
+  for (var j = 0; j < STAT_FIELDS.length; j++) {
+    rowValues.push(Number(body[STAT_FIELDS[j]]));
+  }
+
+  rowValues.push(String(body.foto_url || '').trim());
+  return rowValues;
+}
+
+function migrateSchemaIfNeeded_(sheet, data) {
+  var headers = data[0] || [];
+  var normalized = headers.map(function(x) { return String(x).toLowerCase().trim(); });
+  if (normalized.indexOf('posicion_1') >= 0 && normalized.indexOf('arquero') >= 0) {
+    return data;
+  }
+
+  var legacy = isLegacyFormat_(headers);
+  var oldGoalkeeperFields = hasOldGoalkeeperFields_(headers);
+  var migratedRows = [];
+
+  for (var i = 1; i < data.length; i++) {
+    var player = rowToPlayer_(data[i], legacy, oldGoalkeeperFields);
+    if (player) migratedRows.push(buildRowValues_(player));
+  }
+
+  sheet.clearContents();
+  sheet.getRange(1, 1, 1, CURRENT_HEADERS.length).setValues([CURRENT_HEADERS]);
+  if (migratedRows.length) {
+    sheet.getRange(2, 1, migratedRows.length, CURRENT_HEADERS.length).setValues(migratedRows);
+  }
+
+  return [CURRENT_HEADERS].concat(migratedRows);
+}
+
+function findPlayerRow_(data, nombre) {
+  for (var r = 1; r < data.length; r++) {
+    if (String(data[r][0] || '').trim() === nombre) {
+      return r + 1;
+    }
+  }
+  return -1;
+}
+
+function nameExists_(data, nombre, ignoreRowIndex) {
+  var target = nombre.trim().toLowerCase();
+  for (var r = 1; r < data.length; r++) {
+    if (ignoreRowIndex && r + 1 === ignoreRowIndex) continue;
+    if (String(data[r][0] || '').trim().toLowerCase() === target) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function validateStats_(body) {
+  for (var i = 0; i < STAT_FIELDS.length; i++) {
+    var key = STAT_FIELDS[i];
+    var val = Number(body[key]);
+    if (isNaN(val) || val < 1 || val > 5) {
+      return 'Atributo inválido: ' + key;
+    }
+  }
+  return null;
+}
+
+function getFotosFolder_() {
+  var folders = DriveApp.getFoldersByName(FOTOS_FOLDER_NAME);
+  if (folders.hasNext()) return folders.next();
+  return DriveApp.createFolder(FOTOS_FOLDER_NAME);
+}
+
+function uploadFotoToDrive_(nombre, base64, mimeType) {
+  var folder = getFotosFolder_();
+  var safeName = String(nombre || 'jugador')
+    .replace(/[^a-zA-Z0-9áéíóúñÁÉÍÓÚÑüÜ ]/g, '')
+    .trim()
+    .replace(/\s+/g, '_') || 'jugador';
+  var ext = mimeType === 'image/png' ? 'png' : 'jpg';
+  var fileName = safeName + '.' + ext;
+
+  var existing = folder.getFilesByName(fileName);
+  while (existing.hasNext()) {
+    existing.next().setTrashed(true);
+  }
+
+  var blob = Utilities.newBlob(Utilities.base64Decode(base64), mimeType, fileName);
+  var file = folder.createFile(blob);
+  file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+
+  return 'https://drive.google.com/thumbnail?id=' + file.getId() + '&sz=w400';
+}
+
+function setPlayerFotoUrl_(nombre, fotoUrl) {
+  var sheet = getSheet_();
+  var data = sheet.getDataRange().getValues();
+  var rowIndex = findPlayerRow_(data, nombre);
+
+  if (rowIndex === -1) {
+    throw new Error('Jugador no encontrado: ' + nombre);
+  }
+
+  sheet.getRange(rowIndex, COL_NEW.foto_url + 1).setValue(fotoUrl);
+}
+
+function doPost(e) {
+  try {
+    var body = JSON.parse(e.postData.contents);
+    var nombre = String(body.nombre || '').trim();
+    var action = String(body.action || 'update').trim();
+
+    if (!nombre) {
+      return jsonResponse_({ ok: false, error: 'Falta el nombre del jugador' });
+    }
+
+    var sheet = getSheet_();
+    var data = sheet.getDataRange().getValues();
+    data = migrateSchemaIfNeeded_(sheet, data);
+
+    if (action === 'uploadFoto') {
+      if (!body.imageBase64) {
+        return jsonResponse_({ ok: false, error: 'Falta la imagen' });
+      }
+      var fotoUrl = uploadFotoToDrive_(
+        nombre,
+        body.imageBase64,
+        body.mimeType || 'image/jpeg'
+      );
+      setPlayerFotoUrl_(nombre, fotoUrl);
+      return jsonResponse_({ ok: true, nombre: nombre, foto_url: fotoUrl });
+    }
+
+    var statError = validateStats_(body);
+    if (statError) {
+      return jsonResponse_({ ok: false, error: statError });
+    }
+
+    if (action === 'create') {
+      if (nameExists_(data, nombre, null)) {
+        return jsonResponse_({ ok: false, error: 'Ya existe un jugador con ese nombre' });
+      }
+      sheet.appendRow(buildRowValues_(body));
+      return jsonResponse_({ ok: true, nombre: nombre, created: true });
+    }
+
+    var rowIndex = findPlayerRow_(data, nombre);
+
+    if (rowIndex === -1) {
+      return jsonResponse_({ ok: false, error: 'Jugador no encontrado: ' + nombre });
+    }
+
+    sheet.getRange(rowIndex, 1, 1, buildRowValues_(body).length).setValues([buildRowValues_(body)]);
+
+    return jsonResponse_({ ok: true, nombre: nombre });
+  } catch (err) {
+    return jsonResponse_({ ok: false, error: String(err) });
+  }
+}
+
+function jsonResponse_(obj) {
+  return ContentService
+    .createTextOutput(JSON.stringify(obj))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
+
+
+================================================================================
+ ARCHIVO: jugadores.csv
+================================================================================
+
+Nombre,Posicion_1,Posicion_2,Juega_arco,Edad,Altura,Pie_habil,Vel_fis,Resistencia,Fuerza,Regate,Pase_corto,Pase_largo,Posicionamiento,Remate,Marca,Arquero,Foto_url
+Marcelo,MED,DEL,0,30,175,Derecho,3,3,3,3,3,3,3,3,3,1,
+Maxi,MED,DEL,0,30,175,Derecho,3,3,3,3,3,3,3,3,3,1,
+Turco,MED,DEL,0,30,175,Derecho,3,3,3,3,3,3,3,3,3,1,
+Gato,MED,DEL,0,30,175,Derecho,3,3,3,3,3,3,3,3,3,1,
+Mariano,MED,DEL,0,30,175,Derecho,3,3,3,3,3,3,3,3,3,1,
+Charly,MED,DEL,0,30,175,Derecho,3,3,3,3,3,3,3,3,3,1,
+Gonza,MED,DEL,0,30,175,Derecho,3,3,3,3,3,3,3,3,3,1,
+Ariel,MED,DEL,0,30,175,Derecho,3,3,3,3,3,3,3,3,3,1,
+Claudio,MED,DEL,0,30,175,Derecho,3,3,3,3,3,3,3,3,3,1,
+Cacho,MED,DEL,0,30,175,Derecho,3,3,3,3,3,3,3,3,3,1,
+Jorge,MED,DEL,0,30,175,Derecho,3,3,3,3,3,3,3,3,3,1,
+Jose,MED,DEL,0,30,175,Derecho,3,3,3,3,3,3,3,3,3,1,
+Claudio M,MED,DEL,0,30,175,Derecho,3,3,3,3,3,3,3,3,3,1,
+Seba,MED,DEL,0,30,175,Derecho,3,3,3,3,3,3,3,3,3,1,
+Marcos,MED,DEL,0,30,175,Derecho,3,3,3,3,3,3,3,3,3,1,
+Juampi,MED,DEL,0,30,175,Derecho,3,3,3,3,3,3,3,3,3,1,
+Chifi,MED,DEL,0,30,175,Derecho,3,3,3,3,3,3,3,3,3,1,
+Matías,MED,DEL,0,30,175,Derecho,3,3,3,3,3,3,3,3,3,1,
+Pablo,MED,DEL,0,30,175,Derecho,3,3,3,3,3,3,3,3,3,1,
+Fer,MED,DEL,0,30,175,Derecho,3,3,3,3,3,3,3,3,3,1,
+Tasla,MED,DEL,0,30,175,Derecho,3,3,3,3,3,3,3,3,3,1,
+Franco,MED,DEL,0,30,175,Derecho,3,3,3,3,3,3,3,3,3,1,
+Javi,MED,DEL,0,30,175,Derecho,3,3,3,3,3,3,3,3,3,1,
+
+
+
+================================================================================
+ ARCHIVO: BACKEND_CONTRACT.md
+================================================================================
+
+# Backend objetivo — 3er Tiempo
+
+La interfaz funciona hoy como prototipo local. Este contrato define la API
+necesaria para publicar `3ertiempo.online` sin reescribir el frontend.
+
+## Seguridad
+
+- Contraseñas con Argon2id o bcrypt; nunca texto plano ni SHA-256 simple.
+- Sesión en cookie `HttpOnly`, `Secure`, `SameSite=Lax`.
+- Cada usuario está vinculado exactamente a un jugador.
+- Un usuario solo puede editar los datos personales y la foto de su jugador.
+- La API debe rechazar cualquier autoevaluación.
+- Fotos privadas en storage, expuestas mediante URL pública controlada o CDN.
+
+## Tablas mínimas
+
+### `players`
+
+`id`, `name`, `position_1`, `position_2`, `plays_goalkeeper`, `age`, `height`,
+`preferred_foot`, `photo_url`, `base_stats_json`, `created_at`, `updated_at`.
+
+### `users`
+
+`id`, `player_id UNIQUE`, `username UNIQUE`, `password_hash`, `created_at`.
+
+### `peer_ratings`
+
+`id`, `rater_user_id`, `rated_player_id`, `stats_json`, `updated_at`.
+
+Restricciones:
+
+- `UNIQUE(rater_user_id, rated_player_id)`.
+- `CHECK(rater_user_id <> user_id_del_jugador_evaluado)`.
+- Valores de cada atributo entre 1 y 5.
+
+### `matches`
+
+`id`, `format`, `scheduled_for`, `played_at`, `status`, `created_by`,
+`team_claro_json`, `team_oscuro_json`.
+
+### `match_players`
+
+`match_id`, `player_id`, `selected_by`, `updated_at`.
+
+Restricciones:
+
+- `UNIQUE(match_id, player_id)`.
+- Cualquier usuario autenticado puede agregar o quitar jugadores mientras el
+  partido esté en estado `open`.
+
+### `match_votes`
+
+`id`, `match_id`, `rater_user_id`, `rated_player_id`, `score`, `updated_at`.
+
+Restricciones:
+
+- `UNIQUE(match_id, rater_user_id, rated_player_id)`.
+- `CHECK(score BETWEEN 1 AND 5)`.
+- Sin voto propio.
+
+## Endpoints
+
+### Autenticación
+
+- `POST /v1/auth/status`
+- `POST /v1/auth/register`
+- `POST /v1/auth/login`
+- `POST /v1/auth/logout`
+- `GET /v1/auth/me`
+
+### Jugadores
+
+- `GET /v1/players`
+- `POST /v1/players`
+- `PUT /v1/players/:id`
+- `POST /v1/players/:id/photo`
+
+`GET /v1/players` debe incluir `peer_averages` y `rating_count`. Si no hay
+votos, el frontend usa el valor base 3.
+
+### Valoraciones
+
+- `PUT /v1/players/:id/rating`
+- `GET /v1/players/:id/my-rating`
+
+### Partidos y periódico
+
+- `GET /v1/matches/upcoming`
+- `PUT /v1/matches/:id/players/:player_id`
+- `DELETE /v1/matches/:id/players/:player_id`
+- `POST /v1/matches`
+- `GET /v1/matches`
+- `GET /v1/matches/:id`
+- `PUT /v1/matches/:id/votes`
+- `GET /v1/matches/:id/results`
+- `GET /v1/matches/:id/newspaper`
+
+El texto del periódico puede generarse inicialmente con las plantillas que ya
+usa `ratings.js`; no requiere inteligencia artificial.
+
+
+
+================================================================================
+ ARCHIVO: .github/workflows/pages.yml
+================================================================================
+
+name: Deploy GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: .
+      - id: deployment
+        uses: actions/deploy-pages@v4
+

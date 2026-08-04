@@ -2,13 +2,38 @@
 
 App web para armar equipos de fútbol parejos entre amigos: cartas estilo FIFA, convocatoria del jueves, balanceo automático y crónica postpartido.
 
-## Ver la app
-
-**Link de la interfaz (GitHub Pages):**
+## Ver la app (interfaz en vivo)
 
 **https://josedaminato.github.io/3ertiempo/**
 
-> El link del repositorio (`github.com/josedaminato/3ertiempo`) muestra el código, no la app. Para usar la interfaz abrí el link de arriba.
+> GitHub Pages muestra la app funcionando. No es solo una demo vacía: el código fuente está en este mismo repositorio.
+
+## Compartir / descargar el código completo
+
+Elegí una de estas opciones:
+
+### Opción 1 — Un solo archivo (recomendado para compartir)
+
+Descargá **`3ertiempo-CODIGO-COMPLETO.txt`**: incluye todos los archivos del proyecto en un único documento, separados por secciones.
+
+- [Descargar código completo (.txt)](https://github.com/josedaminato/3ertiempo/raw/main/3ertiempo-CODIGO-COMPLETO.txt)
+- En el repo: abrí el archivo y **Raw** → guardar como
+
+### Opción 2 — ZIP del repositorio
+
+1. Entrá a https://github.com/josedaminato/3ertiempo
+2. Botón verde **Code** → **Download ZIP**
+3. Descomprimí y tenés todos los archivos listos para editar
+
+### Opción 3 — Clonar con Git
+
+```bash
+git clone https://github.com/josedaminato/3ertiempo.git
+cd 3ertiempo
+python -m http.server 8765
+```
+
+Abrí http://localhost:8765/index.html
 
 ## Uso rápido
 
