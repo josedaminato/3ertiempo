@@ -8,8 +8,23 @@ const RatingsService = (() => {
   const PEER_KEY = '3ertiempo_peer_ratings_v1';
   const MATCHES_KEY = '3ertiempo_matches_v1';
   const MATCH_VOTES_KEY = '3ertiempo_match_votes_v1';
-  const CARD_KEYS = ['velocidad', 'tiro', 'pase', 'regate', 'defensa', 'fisico'];
+  const CARD_KEYS = ['velocidad', 'resistencia', 'fuerza', 'tiro', 'pase', 'regate', 'defensa'];
   const MIN_VOTES_FOR_NEWSPAPER = 6;
+
+  function normalizePeerStats(stats) {
+    const out = {};
+    CARD_KEYS.forEach(key => {
+      if (stats?.[key] != null) out[key] = clamp(stats[key]);
+    });
+    if (stats?.fisico != null && out.resistencia == null) {
+      out.resistencia = clamp(stats.fisico);
+      out.fuerza = clamp(stats.fisico);
+    }
+    CARD_KEYS.forEach(key => {
+      if (out[key] == null) out[key] = 3;
+    });
+    return out;
+  }
 
   function normalize(value) {
     return String(value || '').trim().toLocaleLowerCase('es');
@@ -56,7 +71,10 @@ const RatingsService = (() => {
 
     const stats = {};
     CARD_KEYS.forEach(key => {
-      stats[key] = ratings.reduce((sum, rating) => sum + clamp(rating.stats[key]), 0) / ratings.length;
+      stats[key] = ratings.reduce((sum, rating) => {
+        const normalized = normalizePeerStats(rating.stats);
+        return sum + normalized[key];
+      }, 0) / ratings.length;
     });
     return { count: ratings.length, stats };
   }

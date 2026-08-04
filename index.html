@@ -833,6 +833,15 @@
 
     .peer-form-grid { display: grid; gap: 0.55rem; }
 
+    .peer-group-title {
+      margin-top: 0.35rem;
+      font-size: 0.72rem;
+      font-weight: 800;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--accent);
+    }
+
     .rating-row {
       display: grid;
       grid-template-columns: minmax(90px, 1fr) repeat(5, 34px);
@@ -1148,7 +1157,7 @@
         <button class="modal-close" id="peer-modal-close" aria-label="Cerrar">&times;</button>
       </div>
       <div class="modal-preview" id="peer-modal-preview"></div>
-      <p class="peer-note">Calificá del 1 al 5 los atributos de campo. El arquero lo define cada jugador en su perfil.</p>
+      <p class="peer-note">Calificá velocidad, resistencia y fuerza por separado. El FÍS de la carta es el promedio de esos tres. El arquero lo define cada jugador en su perfil.</p>
       <form class="peer-form-grid" id="peer-rating-form"></form>
       <div class="modal-footer">
         <button type="button" class="btn-save" id="btn-save-peer-rating">Guardar valoración</button>
@@ -1369,18 +1378,25 @@
       }
     }
 
-    function computeBaseCard(p) {
+    function physicalBase(p) {
       return {
         velocidad: Number(p.vel_fis) || 3,
+        resistencia: Number(p.resistencia) || 3,
+        fuerza: Number(p.fuerza) || 3
+      };
+    }
+
+    function computeBaseCard(p) {
+      const phys = physicalBase(p);
+      return {
+        velocidad: phys.velocidad,
+        resistencia: phys.resistencia,
+        fuerza: phys.fuerza,
         tiro: Number(p.remate) || 3,
         pase: avg(Number(p.pase_corto) || 3, Number(p.pase_largo) || 3),
         regate: Number(p.regate) || 3,
         defensa: avg(Number(p.marca) || 3, Number(p.posicionamiento) || 3),
-        fisico: avg(
-          Number(p.vel_fis) || 3,
-          Number(p.resistencia) || 3,
-          Number(p.fuerza) || 3
-        )
+        fisico: avg(phys.velocidad, phys.resistencia, phys.fuerza)
       };
     }
 
@@ -1404,14 +1420,31 @@
     function computeCard(p) {
       const base = computeBaseCard(p);
       const peer = RatingsService.getPeerAverage(p.nombre);
-      const fieldStats = peer.count ? { ...base, ...peer.stats } : base;
-      const cardStats = CARD_ATTRS.map(key => fieldStats[key]);
-      const media = Math.round(avg(...cardStats) * 20);
+      const pick = (key, fallback) => (peer.count && peer.stats?.[key] != null ? peer.stats[key] : fallback);
+
+      const velocidad = pick('velocidad', base.velocidad);
+      const resistencia = pick('resistencia', base.resistencia);
+      const fuerza = pick('fuerza', base.fuerza);
+      const tiro = pick('tiro', base.tiro);
+      const pase = pick('pase', base.pase);
+      const regate = pick('regate', base.regate);
+      const defensa = pick('defensa', base.defensa);
+      const fisico = avg(velocidad, resistencia, fuerza);
+      const cardStats = [velocidad, tiro, pase, regate, defensa, fisico];
+
       return {
-        ...fieldStats,
+        velocidad,
+        resistencia,
+        fuerza,
+        tiro,
+        pase,
+        regate,
+        defensa,
+        fisico,
         portero: goalkeeperRating(p),
-        media,
+        media: Math.round(avg(...cardStats) * 20),
         cardStats,
+        physBreakdown: `Vel ${velocidad.toFixed(1)} · Res ${resistencia.toFixed(1)} · Fue ${fuerza.toFixed(1)}`,
         ratingCount: peer.count,
         usesPeerAverage: peer.count > 0
       };
@@ -1463,9 +1496,10 @@
             </div>
             <div class="fifa-name">${escapeHtml(p.nombre)}</div>
             <div class="fifa-stats">
-              ${CARD_LABELS.map((lbl, i) =>
-                `<div class="fifa-stat"><abbr title="${CARD_LABELS_FULL[i]}">${lbl}</abbr><span>${c.cardStats[i].toFixed(1)}</span></div>`
-              ).join('')}
+              ${CARD_LABELS.map((lbl, i) => {
+                const title = lbl === 'FÍS' ? c.physBreakdown : CARD_LABELS_FULL[i];
+                return `<div class="fifa-stat"><abbr title="${escapeHtml(title)}">${lbl}</abbr><span>${c.cardStats[i].toFixed(1)}</span></div>`;
+              }).join('')}
             </div>
             <div class="fifa-meta">${p.edad}a · ${p.altura}cm · ${escapeHtml(p.pie_habil)}</div>
             <div class="fifa-card-action">${isCurrentUser(p) ? 'Editar perfil' : 'Calificar jugador'}</div>
@@ -1818,6 +1852,15 @@
         </div>
         <div class="peer-note">
           Los atributos de campo no se autoeditan. Arrancan con valor base 3 y se reemplazan por el promedio de las valoraciones de los demás jugadores.
+        </div>
+        <div class="form-section">
+          <h4>Físico (referencia)</h4>
+          <p class="peer-note">El FÍS de la carta sale del promedio de velocidad, resistencia y fuerza que votan los demás.</p>
+          <div class="form-grid cols-3">
+            <div class="field"><label>Velocidad base</label><input type="number" value="${physicalBase(p).velocidad}" disabled></div>
+            <div class="field"><label>Resistencia base</label><input type="number" value="${physicalBase(p).resistencia}" disabled></div>
+            <div class="field"><label>Fuerza base</label><input type="number" value="${physicalBase(p).fuerza}" disabled></div>
+          </div>
         </div>`;
     }
 
@@ -1934,12 +1977,37 @@
 
     const PEER_LABELS = {
       velocidad: 'Velocidad',
+      resistencia: 'Resistencia',
+      fuerza: 'Fuerza',
       tiro: 'Remate',
       pase: 'Pase',
       regate: 'Regate',
-      defensa: 'Defensa',
-      fisico: 'Físico'
+      defensa: 'Defensa'
     };
+
+    const PEER_GROUPS = [
+      { title: 'Físico', keys: ['velocidad', 'resistencia', 'fuerza'] },
+      { title: 'Técnico', keys: ['regate', 'pase', 'tiro'] },
+      { title: 'Defensivo', keys: ['defensa'] }
+    ];
+
+    function peerRatingDefault(key, player, existing, base) {
+      if (existing?.[key] != null) return Math.round(existing[key]);
+      if (base[key] != null) return Math.round(base[key]);
+      return 3;
+    }
+
+    function buildPeerRatingRow(key, player, existing, base) {
+      const selected = peerRatingDefault(key, player, existing, base);
+      return `<div class="rating-row">
+        <span class="rating-label">${PEER_LABELS[key]}</span>
+        ${[1, 2, 3, 4, 5].map(value => `
+          <label class="rating-choice">
+            <input type="radio" name="peer_${key}" value="${value}" ${selected === value ? 'checked' : ''}>
+            <span>${value}</span>
+          </label>`).join('')}
+      </div>`;
+    }
 
     function openPeerRating(idx) {
       if (!currentSession || isCurrentUser(players[idx])) return;
@@ -1952,17 +2020,10 @@
       document.getElementById('peer-modal-preview').innerHTML = buildFifaCardHtml(player, false);
       document.getElementById('peer-save-status').textContent = '';
       document.getElementById('peer-save-status').className = 'save-status';
-      document.getElementById('peer-rating-form').innerHTML = RatingsService.cardKeys.map(key => {
-        const selected = Math.round(existing?.[key] || base[key] || 3);
-        return `<div class="rating-row">
-          <span class="rating-label">${PEER_LABELS[key]}</span>
-          ${[1, 2, 3, 4, 5].map(value => `
-            <label class="rating-choice">
-              <input type="radio" name="peer_${key}" value="${value}" ${selected === value ? 'checked' : ''}>
-              <span>${value}</span>
-            </label>`).join('')}
-        </div>`;
-      }).join('');
+      document.getElementById('peer-rating-form').innerHTML = PEER_GROUPS.map(group => `
+        <div class="peer-group-title">${group.title}</div>
+        ${group.keys.map(key => buildPeerRatingRow(key, player, existing, base)).join('')}
+      `).join('');
       document.getElementById('peer-modal-overlay').classList.add('open');
     }
 
