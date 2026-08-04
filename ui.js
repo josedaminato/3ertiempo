@@ -191,14 +191,27 @@ function showAppSession() {
   document.getElementById('login-overlay').classList.add('hidden');
   document.getElementById('session-username').textContent = currentSession.username;
   document.getElementById('session-bar').classList.add('visible');
+  const note = document.querySelector('.prototype-note');
+  if (note) {
+    note.textContent = RatingsService.isApi()
+      ? 'Datos sincronizados en el servidor. Cerrá sesión para cambiar de jugador.'
+      : 'Las cuentas se guardan en este dispositivo. Cerrá sesión para cambiar de jugador.';
+  }
   renderGrid();
+  void refreshSessionData();
+}
+
+async function refreshSessionData() {
   const latestMatch = RatingsService.listMatches()[0];
   if (latestMatch) {
     currentMatch = latestMatch;
+    if (RatingsService.isApi()) {
+      await RatingsService.loadMyMatchVotes(latestMatch.id);
+    }
     renderMatchVoting(currentMatch);
     document.getElementById('match-voting').classList.add('visible');
   }
-  renderLatestNewspaper();
+  await renderLatestNewspaper();
 }
 
 async function logout() {
@@ -261,7 +274,7 @@ function updateSelectionUI() {
   updateFormatWarning();
 }
 
-function togglePlayerSelection(player) {
+async function togglePlayerSelection(player) {
   const key = selectionKey(player);
   const needed = teamSize * 2;
 
@@ -277,16 +290,16 @@ function togglePlayerSelection(player) {
     selectedPlayerNames.add(key);
   }
 
-  savePlayerSelection();
+  await savePlayerSelection();
   lastTopCombos = [];
   currentCombo = null;
   renderGrid();
   updateSelectionUI();
 }
 
-function clearPlayerSelection() {
+async function clearPlayerSelection() {
   selectedPlayerNames.clear();
-  savePlayerSelection();
+  await savePlayerSelection();
   lastTopCombos = [];
   currentCombo = null;
   renderGrid();
@@ -543,9 +556,13 @@ function buildPeerRatingRow(key, player, existing, base) {
 
 function openPeerRating(idx) {
   if (!currentSession || isCurrentUser(players[idx])) return;
+  void openPeerRatingAsync(idx);
+}
+
+async function openPeerRatingAsync(idx) {
   peerRatingIdx = idx;
   const player = players[idx];
-  const existing = RatingsService.getMyPeerRating(currentSession.username, player.nombre);
+  const existing = await RatingsService.getMyPeerRating(currentSession.username, player.nombre);
   const base = computeBaseCard(player);
 
   document.getElementById('peer-modal-title').textContent = `Calificar a ${player.nombre}`;
@@ -565,7 +582,7 @@ function closePeerModal() {
   peerRatingIdx = -1;
 }
 
-function savePeerRating() {
+async function savePeerRating() {
   if (peerRatingIdx < 0 || !currentSession) return;
   const player = players[peerRatingIdx];
   const form = document.getElementById('peer-rating-form');
@@ -576,8 +593,18 @@ function savePeerRating() {
   });
 
   const status = document.getElementById('peer-save-status');
+  status.textContent = 'guardando…';
+  status.className = 'save-status saving';
   try {
-    RatingsService.savePeerRating(currentSession.username, player.nombre, stats);
+    await RatingsService.savePeerRating(currentSession.username, player.nombre, stats);
+    if (RatingsService.isApi()) {
+      const idx = players.findIndex(p => Utils.normalize(p.nombre) === Utils.normalize(player.nombre));
+      if (idx >= 0) {
+        const peer = RatingsService.getPeerAverage(player.nombre);
+        players[idx].rating_count = peer.count;
+        players[idx].peer_averages = peer.stats;
+      }
+    }
     status.textContent = 'guardado';
     status.className = 'save-status saved';
     renderGrid();

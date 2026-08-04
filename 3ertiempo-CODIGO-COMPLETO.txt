@@ -1,5 +1,5 @@
 3er Tiempo — código completo del proyecto
-Generado: 2026-08-03 22:56
+Generado: 2026-08-03 23:24
 
 ===== ARCHIVO: README.md =====
 
@@ -47,11 +47,21 @@ Abrí http://localhost:8765/index.html
 
 ## Desarrollo local
 
+**Frontend:**
 ```bash
 python -m http.server 8765
 ```
 
-Abrí http://localhost:8765/index.html
+**Backend compartido (Fase 2 — recomendado):**
+```bash
+cd server
+npm install
+npm run dev
+```
+
+Abrí http://localhost:8765/index.html — en localhost el frontend usa la API en `http://localhost:3000`.
+
+Ver `server/README.md` para despliegue en `api.3ertiempo.online`.
 
 ## Archivos
 
@@ -72,7 +82,8 @@ separados, sin cambiar comportamiento ni look de la app.
 | `teams.js` | Balanceo de equipos, formaciones, radar |
 | `ui.js` | Login, grid de jugadores, modales de edición/valoración, fotos |
 | `app.js` | Estado global, carga de datos, registro de partido/votación, arranque |
-| `Code.gs` | Backend Google Sheets / Apps Script |
+| `server/` | API Node.js + SQLite (mundo compartido, auth, votos privados) |
+| `Code.gs` | Backend Google Sheets / Apps Script (legacy) |
 | `jugadores.csv` | Plantilla inicial |
 
 Cada `<script src>` en `index.html` sigue este orden de carga porque
@@ -83,6 +94,12 @@ son scripts clásicos (no ES modules) que comparten el scope global.
 - **Bug del periódico:** contaba votos totales en vez de votantes únicos. Ahora `RatingsService.getMatchVoteCount` cuenta personas que votaron.
 - **Partido duplicado:** cada clic en "Registrar partido" creaba un partido nuevo. Ahora se reutiliza el partido abierto para el mismo armado (`RatingsService.findOpenMatch`).
 - `defaultPlayer()` y `normalize()` estaban duplicados en varios archivos; ahora viven en `utils.js`.
+
+## Fase 2 — Mundo compartido
+
+- **Backend** en `server/`: auth con bcrypt, plantilla compartida, convocatoria, valoraciones, partidos y periódico.
+- **Privacidad:** cada uno solo edita su perfil; los votos individuales no se muestran al calificado (solo promedios).
+- **Frontend** conectado vía `provider: 'api'` en `config.js`.
 
 ## GitHub Pages
 
@@ -110,19 +127,23 @@ Sin URL configurada, la app funciona en modo local con los jugadores por defecto
  * Configuración de 3er tiempo
  *
  * provider:
- *   'google' — Google Sheets + Apps Script (temporal, hasta tener backend)
- *   'api'    — Backend propio en api.3ertiempo.online (futuro)
- *   'local'  — Solo este dispositivo (desarrollo / pruebas)
+ *   'api'    — Backend compartido (producción / mundo común)
+ *   'google' — Google Sheets + Apps Script (legacy)
+ *   'local'  — Solo este dispositivo (desarrollo sin servidor)
  */
+const IS_LOCAL_DEV = typeof window !== 'undefined' &&
+  (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+
 const APP_CONFIG = {
-  provider: 'google',
+  provider: 'api',
 
   googleScriptUrl: 'https://script.google.com/macros/s/TU_ID_AQUI/exec',
 
-  /** Base URL del backend futuro (sin barra final) */
-  apiBaseUrl: 'https://api.3ertiempo.online',
+  /** Backend compartido — todos ven el mismo mundo */
+  apiBaseUrl: IS_LOCAL_DEV
+    ? 'http://localhost:3000'
+    : 'https://api.3ertiempo.online',
 
-  /** Nombres iniciales si no hay datos remotos ni guardados localmente */
   defaultPlayerNames: [
     'Marcelo', 'Maxi', 'Turco', 'Gato', 'Mariano', 'Charly', 'Gonza', 'Ariel',
     'Claudio', 'Cacho', 'Jorge', 'Jose', 'Claudio M', 'Seba', 'Marcos',
@@ -198,6 +219,9 @@ const Utils = (() => {
     if (!url) return '';
     if (url.startsWith('data:image/')) return url;
     if (url.startsWith('http://') || url.startsWith('https://')) return url;
+    if (url.startsWith('/uploads/') && typeof APP_CONFIG !== 'undefined') {
+      return `${APP_CONFIG.apiBaseUrl.replace(/\/$/, '')}${url}`;
+    }
     return '';
   }
 
@@ -609,10 +633,9 @@ const AuthService = (() => {
 ===== ARCHIVO: ratings.js =====
 
 /**
- * Evaluaciones y partidos.
- *
- * Este adaptador funciona hoy con localStorage y mantiene un contrato simple
- * para migrarlo a tablas/API cuando se implemente el backend real.
+ * Evaluaciones y partidos — localStorage (prototipo) o API compartida.
+ * En modo API los votos individuales nunca se exponen: solo promedios públicos
+ * y los votos propios del usuario autenticado.
  */
 const RatingsService = (() => {
   const PEER_KEY = '3ertiempo_peer_ratings_v1';
@@ -621,10 +644,36 @@ const RatingsService = (() => {
   const CARD_KEYS = ['velocidad', 'resistencia', 'fuerza', 'tiro', 'pase', 'regate', 'defensa'];
   const ARQUERO_KEY = 'arquero';
   const PEER_KEYS = [...CARD_KEYS, ARQUERO_KEY];
-  // Cantidad de VOTANTES (personas), no de votos individuales. Antes se
-  // contaban votos totales (jugador × votante), así que un solo usuario
-  // votando a 6 jugadores ya publicaba el periódico.
   const MIN_VOTES_FOR_NEWSPAPER = 6;
+
+  const cache = {
+    peerAverages: {},
+    matches: [],
+    voteCounts: {},
+    myVotes: {},
+    newspapers: {}
+  };
+
+  function isApi() {
+    return APP_CONFIG.provider === 'api';
+  }
+
+  function apiBase() {
+    return APP_CONFIG.apiBaseUrl.replace(/\/$/, '');
+  }
+
+  async function apiFetch(path, options = {}) {
+    const res = await fetch(`${apiBase()}${path}`, {
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+      ...options
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.ok === false) {
+      throw new Error(data.error || 'Error de conexión con el servidor');
+    }
+    return data;
+  }
 
   function normalizePeerStats(stats) {
     const out = {};
@@ -644,137 +693,255 @@ const RatingsService = (() => {
     return out;
   }
 
-  function savePeerRating(rater, ratedPlayer, stats) {
-    if (Utils.normalize(rater) === Utils.normalize(ratedPlayer)) {
-      throw new Error('No podés calificarte a vos mismo');
-    }
-    const all = Utils.readJson(PEER_KEY, {});
-    const playerKey = Utils.normalize(ratedPlayer);
-    const raterKey = Utils.normalize(rater);
-    if (!all[playerKey]) all[playerKey] = {};
-    all[playerKey][raterKey] = {
-      rater,
-      createdAt: new Date().toISOString(),
-      stats: Object.fromEntries(PEER_KEYS.map(key => [
-        key,
-        Utils.clamp(stats[key] ?? (key === ARQUERO_KEY ? 1 : 3))
-      ]))
-    };
-    Utils.writeJson(PEER_KEY, all);
-  }
+  // ─── Local ───────────────────────────────────────────────────────────────
 
-  function getMyPeerRating(rater, ratedPlayer) {
-    const all = Utils.readJson(PEER_KEY, {});
-    return all[Utils.normalize(ratedPlayer)]?.[Utils.normalize(rater)]?.stats || null;
-  }
+  const local = {
+    savePeerRating(rater, ratedPlayer, stats) {
+      if (Utils.normalize(rater) === Utils.normalize(ratedPlayer)) {
+        throw new Error('No podés calificarte a vos mismo');
+      }
+      const all = Utils.readJson(PEER_KEY, {});
+      const playerKey = Utils.normalize(ratedPlayer);
+      const raterKey = Utils.normalize(rater);
+      if (!all[playerKey]) all[playerKey] = {};
+      all[playerKey][raterKey] = {
+        rater,
+        createdAt: new Date().toISOString(),
+        stats: Object.fromEntries(PEER_KEYS.map(key => [
+          key,
+          Utils.clamp(stats[key] ?? (key === ARQUERO_KEY ? 1 : 3))
+        ]))
+      };
+      Utils.writeJson(PEER_KEY, all);
+    },
 
-  function getPeerAverage(playerName) {
-    const all = Utils.readJson(PEER_KEY, {});
-    const ratings = Object.values(all[Utils.normalize(playerName)] || {});
-    if (!ratings.length) return { count: 0, stats: null };
+    getMyPeerRating(rater, ratedPlayer) {
+      const all = Utils.readJson(PEER_KEY, {});
+      return all[Utils.normalize(ratedPlayer)]?.[Utils.normalize(rater)]?.stats || null;
+    },
 
-    const stats = {};
-    CARD_KEYS.forEach(key => {
-      stats[key] = ratings.reduce((sum, rating) => {
-        const normalized = normalizePeerStats(rating.stats);
-        return sum + normalized[key];
-      }, 0) / ratings.length;
-    });
+    getPeerAverage(playerName) {
+      const all = Utils.readJson(PEER_KEY, {});
+      const ratings = Object.values(all[Utils.normalize(playerName)] || {});
+      if (!ratings.length) return { count: 0, stats: null };
 
-    const arqueroVotes = ratings
-      .map(rating => normalizePeerStats(rating.stats).arquero)
-      .filter(value => value != null);
-    if (arqueroVotes.length) {
-      stats.arquero = arqueroVotes.reduce((sum, value) => sum + value, 0) / arqueroVotes.length;
-    }
-
-    return { count: ratings.length, stats };
-  }
-
-  function createMatch({ format, teamClaro, teamOscuro }) {
-    const matches = Utils.readJson(MATCHES_KEY, []);
-    const match = {
-      id: `match_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
-      date: new Date().toISOString(),
-      format,
-      teamClaro: teamClaro.map(player => player.nombre),
-      teamOscuro: teamOscuro.map(player => player.nombre),
-      status: 'voting'
-    };
-    matches.unshift(match);
-    Utils.writeJson(MATCHES_KEY, matches.slice(0, 30));
-    return match;
-  }
-
-  function listMatches() {
-    return Utils.readJson(MATCHES_KEY, []);
-  }
-
-  function getMatch(id) {
-    return listMatches().find(match => match.id === id) || null;
-  }
-
-  /** Partido "abierto" más reciente para un mismo armado de equipos, si
-   * existe. Permite reutilizar el partido en vez de crear uno nuevo cada vez
-   * que se toca "Registrar partido". */
-  function findOpenMatch({ format, teamClaro, teamOscuro }) {
-    const claroKeys = teamClaro.map(p => Utils.normalize(p.nombre)).sort();
-    const oscuroKeys = teamOscuro.map(p => Utils.normalize(p.nombre)).sort();
-    return listMatches().find(match => {
-      if (match.format !== format) return false;
-      const mClaro = [...match.teamClaro].map(Utils.normalize).sort();
-      const mOscuro = [...match.teamOscuro].map(Utils.normalize).sort();
-      return JSON.stringify(mClaro) === JSON.stringify(claroKeys) &&
-        JSON.stringify(mOscuro) === JSON.stringify(oscuroKeys);
-    }) || null;
-  }
-
-  function saveMatchVote(matchId, rater, ratedPlayer, score) {
-    if (Utils.normalize(rater) === Utils.normalize(ratedPlayer)) {
-      throw new Error('No podés votarte a vos mismo');
-    }
-    const all = Utils.readJson(MATCH_VOTES_KEY, {});
-    if (!all[matchId]) all[matchId] = {};
-    if (!all[matchId][Utils.normalize(rater)]) all[matchId][Utils.normalize(rater)] = {};
-    all[matchId][Utils.normalize(rater)][Utils.normalize(ratedPlayer)] = {
-      playerName: ratedPlayer,
-      score: Utils.clamp(score),
-      votedAt: new Date().toISOString()
-    };
-    Utils.writeJson(MATCH_VOTES_KEY, all);
-  }
-
-  function getMyMatchVotes(matchId, rater) {
-    return Utils.readJson(MATCH_VOTES_KEY, {})[matchId]?.[Utils.normalize(rater)] || {};
-  }
-
-  /** Cantidad de VOTANTES únicos que ya cargaron al menos un voto en este
-   * partido (antes sumaba votos individuales por jugador, ver comentario en
-   * MIN_VOTES_FOR_NEWSPAPER). */
-  function getMatchVoteCount(matchId) {
-    const matchVotes = Utils.readJson(MATCH_VOTES_KEY, {})[matchId] || {};
-    return Object.keys(matchVotes).length;
-  }
-
-  function getMatchResults(matchId) {
-    const matchVotes = Utils.readJson(MATCH_VOTES_KEY, {})[matchId] || {};
-    const byPlayer = {};
-    Object.values(matchVotes).forEach(raterVotes => {
-      Object.values(raterVotes).forEach(vote => {
-        const key = Utils.normalize(vote.playerName);
-        if (!byPlayer[key]) byPlayer[key] = { playerName: vote.playerName, scores: [] };
-        byPlayer[key].scores.push(Utils.clamp(vote.score));
+      const stats = {};
+      CARD_KEYS.forEach(key => {
+        stats[key] = ratings.reduce((sum, rating) => {
+          return sum + normalizePeerStats(rating.stats)[key];
+        }, 0) / ratings.length;
       });
-    });
 
-    return Object.values(byPlayer)
-      .map(item => ({
-        playerName: item.playerName,
-        average: item.scores.reduce((a, b) => a + b, 0) / item.scores.length,
-        votes: item.scores.length
-      }))
-      .sort((a, b) => b.average - a.average);
-  }
+      const arqueroVotes = ratings
+        .map(rating => normalizePeerStats(rating.stats).arquero)
+        .filter(value => value != null);
+      if (arqueroVotes.length) {
+        stats.arquero = arqueroVotes.reduce((sum, value) => sum + value, 0) / arqueroVotes.length;
+      }
+
+      return { count: ratings.length, stats };
+    },
+
+    createMatch({ format, teamClaro, teamOscuro }) {
+      const matches = Utils.readJson(MATCHES_KEY, []);
+      const match = {
+        id: `match_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+        date: new Date().toISOString(),
+        format,
+        teamClaro: teamClaro.map(player => player.nombre),
+        teamOscuro: teamOscuro.map(player => player.nombre),
+        status: 'voting'
+      };
+      matches.unshift(match);
+      Utils.writeJson(MATCHES_KEY, matches.slice(0, 30));
+      return match;
+    },
+
+    listMatches() {
+      return Utils.readJson(MATCHES_KEY, []);
+    },
+
+    getMatch(id) {
+      return local.listMatches().find(match => match.id === id) || null;
+    },
+
+    findOpenMatch({ format, teamClaro, teamOscuro }) {
+      const claroKeys = teamClaro.map(p => Utils.normalize(p.nombre)).sort();
+      const oscuroKeys = teamOscuro.map(p => Utils.normalize(p.nombre)).sort();
+      return local.listMatches().find(match => {
+        if (match.format !== format) return false;
+        const mClaro = [...match.teamClaro].map(Utils.normalize).sort();
+        const mOscuro = [...match.teamOscuro].map(Utils.normalize).sort();
+        return JSON.stringify(mClaro) === JSON.stringify(claroKeys) &&
+          JSON.stringify(mOscuro) === JSON.stringify(oscuroKeys);
+      }) || null;
+    },
+
+    saveMatchVote(matchId, rater, ratedPlayer, score) {
+      if (Utils.normalize(rater) === Utils.normalize(ratedPlayer)) {
+        throw new Error('No podés votarte a vos mismo');
+      }
+      const all = Utils.readJson(MATCH_VOTES_KEY, {});
+      if (!all[matchId]) all[matchId] = {};
+      if (!all[matchId][Utils.normalize(rater)]) all[matchId][Utils.normalize(rater)] = {};
+      all[matchId][Utils.normalize(rater)][Utils.normalize(ratedPlayer)] = {
+        playerName: ratedPlayer,
+        score: Utils.clamp(score),
+        votedAt: new Date().toISOString()
+      };
+      Utils.writeJson(MATCH_VOTES_KEY, all);
+    },
+
+    getMyMatchVotes(matchId, rater) {
+      return Utils.readJson(MATCH_VOTES_KEY, {})[matchId]?.[Utils.normalize(rater)] || {};
+    },
+
+    getMatchVoteCount(matchId) {
+      const matchVotes = Utils.readJson(MATCH_VOTES_KEY, {})[matchId] || {};
+      return Object.keys(matchVotes).length;
+    },
+
+    getMatchResults(matchId) {
+      const matchVotes = Utils.readJson(MATCH_VOTES_KEY, {})[matchId] || {};
+      const byPlayer = {};
+      Object.values(matchVotes).forEach(raterVotes => {
+        Object.values(raterVotes).forEach(vote => {
+          const key = Utils.normalize(vote.playerName);
+          if (!byPlayer[key]) byPlayer[key] = { playerName: vote.playerName, scores: [] };
+          byPlayer[key].scores.push(Utils.clamp(vote.score));
+        });
+      });
+
+      return Object.values(byPlayer)
+        .map(item => ({
+          playerName: item.playerName,
+          average: item.scores.reduce((a, b) => a + b, 0) / item.scores.length,
+          votes: item.scores.length
+        }))
+        .sort((a, b) => b.average - a.average);
+    }
+  };
+
+  // ─── API ─────────────────────────────────────────────────────────────────
+
+  const api = {
+    seedPeerAveragesFromPlayers(players) {
+      players.forEach(p => {
+        cache.peerAverages[Utils.normalize(p.nombre)] = {
+          count: p.rating_count || 0,
+          stats: p.peer_averages || null
+        };
+      });
+    },
+
+    async syncMatches() {
+      const data = await apiFetch('/v1/matches');
+      cache.matches = data.matches || [];
+      await Promise.all(cache.matches.slice(0, 5).map(m => api.refreshMatchMeta(m.id)));
+    },
+
+    async refreshMatchMeta(matchId) {
+      const data = await apiFetch(`/v1/matches/${encodeURIComponent(matchId)}/results`);
+      cache.voteCounts[matchId] = data.voteCount;
+      cache.newspapers[matchId] = null;
+      return data;
+    },
+
+    async savePeerRating(rater, ratedPlayer, stats) {
+      const data = await apiFetch(`/v1/players/${encodeURIComponent(ratedPlayer)}/rating`, {
+        method: 'PUT',
+        body: JSON.stringify({ stats })
+      });
+      cache.peerAverages[Utils.normalize(ratedPlayer)] = data.peer_averages;
+      return data;
+    },
+
+    async getMyPeerRating(rater, ratedPlayer) {
+      const data = await apiFetch(`/v1/players/${encodeURIComponent(ratedPlayer)}/my-rating`);
+      return data.stats;
+    },
+
+    getPeerAverage(playerName) {
+      return cache.peerAverages[Utils.normalize(playerName)] || { count: 0, stats: null };
+    },
+
+    async registerMatch({ format, teamClaro, teamOscuro }) {
+      const data = await apiFetch('/v1/matches', {
+        method: 'POST',
+        body: JSON.stringify({
+          format,
+          teamClaro,
+          teamOscuro,
+          findOpen: true
+        })
+      });
+      if (!cache.matches.find(m => m.id === data.match.id)) {
+        cache.matches.unshift(data.match);
+      }
+      await api.refreshMatchMeta(data.match.id);
+      return data.match;
+    },
+
+    listMatches() {
+      return cache.matches;
+    },
+
+    getMatch(id) {
+      return cache.matches.find(match => match.id === id) || null;
+    },
+
+    findOpenMatch(payload) {
+      const claroKeys = payload.teamClaro.map(p => Utils.normalize(p.nombre)).sort();
+      const oscuroKeys = payload.teamOscuro.map(p => Utils.normalize(p.nombre)).sort();
+      return cache.matches.find(match => {
+        if (match.format !== payload.format) return false;
+        const mClaro = [...match.teamClaro].map(Utils.normalize).sort();
+        const mOscuro = [...match.teamOscuro].map(Utils.normalize).sort();
+        return JSON.stringify(mClaro) === JSON.stringify(claroKeys) &&
+          JSON.stringify(mOscuro) === JSON.stringify(oscuroKeys);
+      }) || null;
+    },
+
+    async saveMatchVotes(matchId, votes) {
+      const data = await apiFetch(`/v1/matches/${encodeURIComponent(matchId)}/votes`, {
+        method: 'PUT',
+        body: JSON.stringify({ votes })
+      });
+      cache.voteCounts[matchId] = data.voteCount;
+      cache.newspapers[matchId] = null;
+      await api.refreshMatchMeta(matchId);
+      return data;
+    },
+
+    async loadMyMatchVotes(matchId) {
+      const data = await apiFetch(`/v1/matches/${encodeURIComponent(matchId)}/my-votes`);
+      cache.myVotes[matchId] = data.votes || {};
+      return cache.myVotes[matchId];
+    },
+
+    getMyMatchVotes(matchId) {
+      return cache.myVotes[matchId] || {};
+    },
+
+    getMatchVoteCount(matchId) {
+      return cache.voteCounts[matchId] || 0;
+    },
+
+    async getMatchResults(matchId) {
+      const data = await apiFetch(`/v1/matches/${encodeURIComponent(matchId)}/results`);
+      cache.voteCounts[matchId] = data.voteCount;
+      return data.results || [];
+    },
+
+    async fetchNewspaper(matchId) {
+      const data = await apiFetch(`/v1/matches/${encodeURIComponent(matchId)}/newspaper`);
+      cache.voteCounts[matchId] = data.voteCount;
+      cache.newspapers[matchId] = data.newspaper;
+      return data.newspaper;
+    }
+  };
+
+  // ─── Periódico (compartido local/API) ────────────────────────────────────
 
   function hash(text) {
     return Array.from(String(text)).reduce((acc, char) => ((acc << 5) - acc + char.charCodeAt(0)) | 0, 0);
@@ -824,10 +991,10 @@ const RatingsService = (() => {
     ], seed);
   }
 
-  function buildNewspaper(match) {
-    const voteCount = getMatchVoteCount(match.id);
+  function buildNewspaperLocal(match) {
+    const voteCount = local.getMatchVoteCount(match.id);
     if (voteCount < MIN_VOTES_FOR_NEWSPAPER) return null;
-    const results = getMatchResults(match.id);
+    const results = local.getMatchResults(match.id);
     if (!results.length) return null;
     const top = results[0];
     const bottom = results[results.length - 1];
@@ -851,23 +1018,130 @@ const RatingsService = (() => {
     };
   }
 
+  // ─── Público ─────────────────────────────────────────────────────────────
+
+  async function initFromPlayers(players) {
+    if (!isApi()) return;
+    api.seedPeerAveragesFromPlayers(players);
+    await api.syncMatches();
+  }
+
+  async function loadConvocation() {
+    if (!isApi()) {
+      const saved = Utils.readJson(STORAGE_KEYS.selection, []);
+      return new Set(Array.isArray(saved) ? saved : []);
+    }
+    const data = await apiFetch('/v1/convocation');
+    return new Set(data.keys || (data.players || []).map(Utils.normalize));
+  }
+
+  async function saveConvocation(selectedKeys, playersList) {
+    if (!isApi()) {
+      Utils.writeJson(STORAGE_KEYS.selection, [...selectedKeys]);
+      return;
+    }
+    const names = playersList
+      .filter(p => selectedKeys.has(Utils.normalize(p.nombre)))
+      .map(p => p.nombre);
+    await apiFetch('/v1/convocation', {
+      method: 'PUT',
+      body: JSON.stringify({ players: names })
+    });
+  }
+
   return {
     cardKeys: PEER_KEYS,
     fieldKeys: CARD_KEYS,
     arqueroKey: ARQUERO_KEY,
     minVotesForNewspaper: MIN_VOTES_FOR_NEWSPAPER,
-    savePeerRating,
-    getMyPeerRating,
-    getPeerAverage,
-    createMatch,
-    findOpenMatch,
-    listMatches,
-    getMatch,
-    saveMatchVote,
-    getMyMatchVotes,
-    getMatchVoteCount,
-    getMatchResults,
-    buildNewspaper
+    isApi,
+    initFromPlayers,
+    loadConvocation,
+    saveConvocation,
+
+    savePeerRating(rater, ratedPlayer, stats) {
+      if (isApi()) return api.savePeerRating(rater, ratedPlayer, stats);
+      local.savePeerRating(rater, ratedPlayer, stats);
+      return Promise.resolve();
+    },
+
+    getMyPeerRating(rater, ratedPlayer) {
+      if (isApi()) return api.getMyPeerRating(rater, ratedPlayer);
+      return local.getMyPeerRating(rater, ratedPlayer);
+    },
+
+    getPeerAverage(playerName) {
+      if (isApi()) return api.getPeerAverage(playerName);
+      return local.getPeerAverage(playerName);
+    },
+
+    createMatch(payload) {
+      if (isApi()) return api.registerMatch(payload);
+      return Promise.resolve(local.createMatch(payload));
+    },
+
+    findOpenMatch(payload) {
+      if (isApi()) return api.findOpenMatch(payload);
+      return local.findOpenMatch(payload);
+    },
+
+    listMatches() {
+      if (isApi()) return api.listMatches();
+      return local.listMatches();
+    },
+
+    getMatch(id) {
+      if (isApi()) return api.getMatch(id);
+      return local.getMatch(id);
+    },
+
+    saveMatchVote(matchId, rater, ratedPlayer, score) {
+      return local.saveMatchVote(matchId, rater, ratedPlayer, score);
+    },
+
+    async saveAllMatchVotes(matchId, votes) {
+      if (!isApi()) {
+        votes.forEach(vote => {
+          local.saveMatchVote(matchId, '', vote.playerName, vote.score);
+        });
+        return { voteCount: local.getMatchVoteCount(matchId) };
+      }
+      const data = await api.saveMatchVotes(matchId, votes);
+      await api.fetchNewspaper(matchId);
+      return data;
+    },
+
+    getMyMatchVotes(matchId, rater) {
+      if (isApi()) return api.getMyMatchVotes(matchId);
+      return local.getMyMatchVotes(matchId, rater);
+    },
+
+    loadMyMatchVotes(matchId) {
+      if (isApi()) return api.loadMyMatchVotes(matchId);
+      return Promise.resolve(local.getMyMatchVotes(matchId, ''));
+    },
+
+    getMatchVoteCount(matchId) {
+      if (isApi()) return api.getMatchVoteCount(matchId);
+      return local.getMatchVoteCount(matchId);
+    },
+
+    getMatchResults(matchId) {
+      if (isApi()) return api.getMatchResults(matchId);
+      return Promise.resolve(local.getMatchResults(matchId));
+    },
+
+    buildNewspaper(match) {
+      if (isApi()) {
+        return cache.newspapers[match.id] || null;
+      }
+      return buildNewspaperLocal(match);
+    },
+
+    async refreshNewspaper(match) {
+      if (!isApi()) return buildNewspaperLocal(match);
+      return api.fetchNewspaper(match.id);
+    }
   };
 })();
 
@@ -1510,14 +1784,27 @@ function showAppSession() {
   document.getElementById('login-overlay').classList.add('hidden');
   document.getElementById('session-username').textContent = currentSession.username;
   document.getElementById('session-bar').classList.add('visible');
+  const note = document.querySelector('.prototype-note');
+  if (note) {
+    note.textContent = RatingsService.isApi()
+      ? 'Datos sincronizados en el servidor. Cerrá sesión para cambiar de jugador.'
+      : 'Las cuentas se guardan en este dispositivo. Cerrá sesión para cambiar de jugador.';
+  }
   renderGrid();
+  void refreshSessionData();
+}
+
+async function refreshSessionData() {
   const latestMatch = RatingsService.listMatches()[0];
   if (latestMatch) {
     currentMatch = latestMatch;
+    if (RatingsService.isApi()) {
+      await RatingsService.loadMyMatchVotes(latestMatch.id);
+    }
     renderMatchVoting(currentMatch);
     document.getElementById('match-voting').classList.add('visible');
   }
-  renderLatestNewspaper();
+  await renderLatestNewspaper();
 }
 
 async function logout() {
@@ -1580,7 +1867,7 @@ function updateSelectionUI() {
   updateFormatWarning();
 }
 
-function togglePlayerSelection(player) {
+async function togglePlayerSelection(player) {
   const key = selectionKey(player);
   const needed = teamSize * 2;
 
@@ -1596,16 +1883,16 @@ function togglePlayerSelection(player) {
     selectedPlayerNames.add(key);
   }
 
-  savePlayerSelection();
+  await savePlayerSelection();
   lastTopCombos = [];
   currentCombo = null;
   renderGrid();
   updateSelectionUI();
 }
 
-function clearPlayerSelection() {
+async function clearPlayerSelection() {
   selectedPlayerNames.clear();
-  savePlayerSelection();
+  await savePlayerSelection();
   lastTopCombos = [];
   currentCombo = null;
   renderGrid();
@@ -1862,9 +2149,13 @@ function buildPeerRatingRow(key, player, existing, base) {
 
 function openPeerRating(idx) {
   if (!currentSession || isCurrentUser(players[idx])) return;
+  void openPeerRatingAsync(idx);
+}
+
+async function openPeerRatingAsync(idx) {
   peerRatingIdx = idx;
   const player = players[idx];
-  const existing = RatingsService.getMyPeerRating(currentSession.username, player.nombre);
+  const existing = await RatingsService.getMyPeerRating(currentSession.username, player.nombre);
   const base = computeBaseCard(player);
 
   document.getElementById('peer-modal-title').textContent = `Calificar a ${player.nombre}`;
@@ -1884,7 +2175,7 @@ function closePeerModal() {
   peerRatingIdx = -1;
 }
 
-function savePeerRating() {
+async function savePeerRating() {
   if (peerRatingIdx < 0 || !currentSession) return;
   const player = players[peerRatingIdx];
   const form = document.getElementById('peer-rating-form');
@@ -1895,8 +2186,18 @@ function savePeerRating() {
   });
 
   const status = document.getElementById('peer-save-status');
+  status.textContent = 'guardando…';
+  status.className = 'save-status saving';
   try {
-    RatingsService.savePeerRating(currentSession.username, player.nombre, stats);
+    await RatingsService.savePeerRating(currentSession.username, player.nombre, stats);
+    if (RatingsService.isApi()) {
+      const idx = players.findIndex(p => Utils.normalize(p.nombre) === Utils.normalize(player.nombre));
+      if (idx >= 0) {
+        const peer = RatingsService.getPeerAverage(player.nombre);
+        players[idx].rating_count = peer.count;
+        players[idx].peer_averages = peer.stats;
+      }
+    }
     status.textContent = 'guardado';
     status.className = 'save-status saved';
     renderGrid();
@@ -1926,14 +2227,27 @@ let currentSession = null;
 let currentCombo = null;
 let currentMatch = null;
 let peerRatingIdx = -1;
-let selectedPlayerNames = loadPlayerSelection();
+let selectedPlayerNames = new Set();
 
-function loadPlayerSelection() {
+async function loadPlayerSelection() {
+  if (RatingsService.isApi()) {
+    try {
+      return await RatingsService.loadConvocation();
+    } catch {
+      return new Set();
+    }
+  }
   const saved = Utils.readJson(STORAGE_KEYS.selection, []);
   return new Set(Array.isArray(saved) ? saved : []);
 }
 
-function savePlayerSelection() {
+async function savePlayerSelection() {
+  if (RatingsService.isApi()) {
+    try {
+      await RatingsService.saveConvocation(selectedPlayerNames, players);
+    } catch { /* convocatoria local de respaldo */ }
+    return;
+  }
   Utils.writeJson(STORAGE_KEYS.selection, [...selectedPlayerNames]);
 }
 
@@ -1966,6 +2280,14 @@ async function loadPlayers() {
     const result = await PlayerApi.listPlayers();
     players = result.players.map(normalizePlayer);
     applyLocalPhotos();
+    if (RatingsService.isApi()) {
+      try {
+        await RatingsService.initFromPlayers(players);
+        selectedPlayerNames = await loadPlayerSelection();
+      } catch {
+        status.classList.add('error');
+      }
+    }
     status.textContent = result.message;
     if (result.offline) status.classList.add('error');
   } catch {
@@ -1994,7 +2316,7 @@ function normalizePlayer(p) {
   out.edad = Number(p.edad) || out.edad;
   out.altura = Number(p.altura) || out.altura;
   out.pie_habil = p.pie_habil || out.pie_habil;
-  out.foto_url = p.foto_url || '';
+  out.foto_url = Utils.safePhotoUrl(p.foto_url || '');
   STAT_FIELDS.forEach(f => {
     if (f === 'arquero') return;
     out[f] = Utils.roundStat(Number(p[f]) || 3);
@@ -2085,22 +2407,16 @@ async function savePlayer(idx) {
 
 // ─── Partido y votación postpartido ────────────────────────────────────────
 
-function registerCurrentMatch() {
+async function registerCurrentMatch() {
   if (!currentCombo || !currentSession) return;
 
-  // Reutilizar el partido abierto para este mismo armado de equipos en vez
-  // de crear uno nuevo cada vez que se toca el botón (antes cada clic
-  // generaba un partido distinto y dispersaba los votos).
-  currentMatch = RatingsService.findOpenMatch({
-    format: teamSize,
-    teamClaro: currentCombo.teamA,
-    teamOscuro: currentCombo.teamB
-  }) || RatingsService.createMatch({
+  currentMatch = await RatingsService.createMatch({
     format: teamSize,
     teamClaro: currentCombo.teamA,
     teamOscuro: currentCombo.teamB
   });
 
+  await RatingsService.loadMyMatchVotes(currentMatch.id);
   renderMatchVoting(currentMatch);
   document.getElementById('match-voting').classList.add('visible');
   document.getElementById('match-voting').scrollIntoView({ behavior: 'smooth' });
@@ -2133,32 +2449,52 @@ function renderMatchVoting(match) {
     }).join('');
 }
 
-function saveMatchVotes() {
+async function saveMatchVotes() {
   if (!currentMatch || !currentSession) return;
   const rows = document.querySelectorAll('#match-vote-list .match-player-row');
+  const votes = [];
   rows.forEach(row => {
     const selected = row.querySelector('input[type=radio]:checked');
     if (selected) {
-      RatingsService.saveMatchVote(
-        currentMatch.id,
-        currentSession.username,
-        selected.dataset.player,
-        Number(selected.value)
-      );
+      votes.push({
+        playerName: selected.dataset.player,
+        score: Number(selected.value)
+      });
     }
   });
-  const status = document.getElementById('match-vote-status');
-  const voteCount = RatingsService.getMatchVoteCount(currentMatch.id);
-  const minVotes = RatingsService.minVotesForNewspaper;
-  status.className = 'load-status';
 
-  if (voteCount >= minVotes) {
-    status.textContent = `Votos guardados · Periódico publicado (${voteCount} votos)`;
-    renderNewspaper(currentMatch);
-    document.getElementById('newspaper-section').scrollIntoView({ behavior: 'smooth' });
-  } else {
-    status.textContent = `Votos guardados · Faltan ${minVotes - voteCount} votos para publicar el periódico (${voteCount}/${minVotes})`;
-    renderNewspaper(currentMatch);
+  const status = document.getElementById('match-vote-status');
+  status.className = 'load-status saving';
+  status.textContent = 'Guardando votos…';
+
+  try {
+    if (RatingsService.isApi()) {
+      await RatingsService.saveAllMatchVotes(currentMatch.id, votes);
+    } else {
+      votes.forEach(vote => {
+        RatingsService.saveMatchVote(
+          currentMatch.id,
+          currentSession.username,
+          vote.playerName,
+          vote.score
+        );
+      });
+    }
+
+    const voteCount = RatingsService.getMatchVoteCount(currentMatch.id);
+    const minVotes = RatingsService.minVotesForNewspaper;
+
+    if (voteCount >= minVotes) {
+      status.textContent = `Votos guardados · Periódico publicado (${voteCount} votantes)`;
+      await renderNewspaper(currentMatch);
+      document.getElementById('newspaper-section').scrollIntoView({ behavior: 'smooth' });
+    } else {
+      status.textContent = `Votos guardados · Faltan ${minVotes - voteCount} votantes para publicar (${voteCount}/${minVotes})`;
+      await renderNewspaper(currentMatch);
+    }
+  } catch (error) {
+    status.textContent = error.message || 'Error al guardar';
+    status.className = 'load-status error';
   }
 }
 
@@ -2168,7 +2504,10 @@ function arrowFor(trend) {
   return '●';
 }
 
-function renderNewspaper(match) {
+async function renderNewspaper(match) {
+  if (RatingsService.isApi()) {
+    await RatingsService.refreshNewspaper(match);
+  }
   const edition = RatingsService.buildNewspaper(match);
   const section = document.getElementById('newspaper-section');
   const newspaper = document.getElementById('newspaper');
@@ -2219,22 +2558,25 @@ function renderNewspaper(match) {
   section.classList.add('visible');
 }
 
-function renderLatestNewspaper() {
+async function renderLatestNewspaper() {
   const section = document.getElementById('newspaper-section');
   const latest = RatingsService.listMatches().find(match =>
     RatingsService.getMatchVoteCount(match.id) > 0
-  );
+  ) || RatingsService.listMatches()[0];
   if (!latest) {
     section.classList.remove('visible');
     return;
   }
-  renderNewspaper(latest);
+  await renderNewspaper(latest);
 }
 
 // ─── Arranque ───────────────────────────────────────────────────────────────
 
 document.addEventListener('DOMContentLoaded', async () => {
   initFormatButtons();
+  if (!RatingsService.isApi()) {
+    selectedPlayerNames = await loadPlayerSelection();
+  }
   await loadPlayers();
   initAuth();
   document.getElementById('btn-armar').addEventListener('click', () => armarEquipos(false));
@@ -3967,5 +4309,2949 @@ jobs:
           path: .
       - id: deployment
         uses: actions/deploy-pages@v4
+
+
+===== ARCHIVO: server/package.json =====
+
+{
+  "name": "3ertiempo-api",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js"
+  },
+  "dependencies": {
+    "bcrypt": "^5.1.1",
+    "better-sqlite3": "^11.8.1",
+    "cookie-session": "^2.1.0",
+    "cors": "^2.8.5",
+    "express": "^4.21.2"
+  }
+}
+
+
+===== ARCHIVO: server/package-lock.json =====
+
+{
+  "name": "3ertiempo-api",
+  "version": "1.0.0",
+  "lockfileVersion": 3,
+  "requires": true,
+  "packages": {
+    "": {
+      "name": "3ertiempo-api",
+      "version": "1.0.0",
+      "dependencies": {
+        "bcrypt": "^5.1.1",
+        "better-sqlite3": "^11.8.1",
+        "cookie-session": "^2.1.0",
+        "cors": "^2.8.5",
+        "express": "^4.21.2"
+      }
+    },
+    "node_modules/@mapbox/node-pre-gyp": {
+      "version": "1.0.11",
+      "resolved": "https://registry.npmjs.org/@mapbox/node-pre-gyp/-/node-pre-gyp-1.0.11.tgz",
+      "integrity": "sha512-Yhlar6v9WQgUp/He7BdgzOz8lqMQ8sU+jkCq7Wx8Myc5YFJLbEe7lgui/V7G1qB1DJykHSGwreceSaD60Y0PUQ==",
+      "license": "BSD-3-Clause",
+      "dependencies": {
+        "detect-libc": "^2.0.0",
+        "https-proxy-agent": "^5.0.0",
+        "make-dir": "^3.1.0",
+        "node-fetch": "^2.6.7",
+        "nopt": "^5.0.0",
+        "npmlog": "^5.0.1",
+        "rimraf": "^3.0.2",
+        "semver": "^7.3.5",
+        "tar": "^6.1.11"
+      },
+      "bin": {
+        "node-pre-gyp": "bin/node-pre-gyp"
+      }
+    },
+    "node_modules/abbrev": {
+      "version": "1.1.1",
+      "resolved": "https://registry.npmjs.org/abbrev/-/abbrev-1.1.1.tgz",
+      "integrity": "sha512-nne9/IiQ/hzIhY6pdDnbBtz7DjPTKrY00P/zvPSm5pOFkl6xuGrGnXn/VtTNNfNtAfZ9/1RtehkszU9qcTii0Q==",
+      "license": "ISC"
+    },
+    "node_modules/accepts": {
+      "version": "1.3.8",
+      "resolved": "https://registry.npmjs.org/accepts/-/accepts-1.3.8.tgz",
+      "integrity": "sha512-PYAthTa2m2VKxuvSD3DPC/Gy+U+sOA1LAuT8mkmRuvw+NACSaeXEQ+NHcVF7rONl6qcaxV3Uuemwawk+7+SJLw==",
+      "license": "MIT",
+      "dependencies": {
+        "mime-types": "~2.1.34",
+        "negotiator": "0.6.3"
+      },
+      "engines": {
+        "node": ">= 0.6"
+      }
+    },
+    "node_modules/agent-base": {
+      "version": "6.0.2",
+      "resolved": "https://registry.npmjs.org/agent-base/-/agent-base-6.0.2.tgz",
+      "integrity": "sha512-RZNwNclF7+MS/8bDg70amg32dyeZGZxiDuQmZxKLAlQjr3jGyLx+4Kkk58UO7D2QdgFIQCovuSuZESne6RG6XQ==",
+      "license": "MIT",
+      "dependencies": {
+        "debug": "4"
+      },
+      "engines": {
+        "node": ">= 6.0.0"
+      }
+    },
+    "node_modules/agent-base/node_modules/debug": {
+      "version": "4.4.3",
+      "resolved": "https://registry.npmjs.org/debug/-/debug-4.4.3.tgz",
+      "integrity": "sha512-RGwwWnwQvkVfavKVt22FGLw+xYSdzARwm0ru6DhTVA3umU5hZc28V3kO4stgYryrTlLpuvgI9GiijltAjNbcqA==",
+      "license": "MIT",
+      "dependencies": {
+        "ms": "^2.1.3"
+      },
+      "engines": {
+        "node": ">=6.0"
+      },
+      "peerDependenciesMeta": {
+        "supports-color": {
+          "optional": true
+        }
+      }
+    },
+    "node_modules/ansi-regex": {
+      "version": "5.0.1",
+      "resolved": "https://registry.npmjs.org/ansi-regex/-/ansi-regex-5.0.1.tgz",
+      "integrity": "sha512-quJQXlTSUGL2LH9SUXo8VwsY4soanhgo6LNSm84E1LBcE8s3O0wpdiRzyR9z/ZZJMlMWv37qOOb9pdJlMUEKFQ==",
+      "license": "MIT",
+      "engines": {
+        "node": ">=8"
+      }
+    },
+    "node_modules/aproba": {
+      "version": "2.1.0",
+      "resolved": "https://registry.npmjs.org/aproba/-/aproba-2.1.0.tgz",
+      "integrity": "sha512-tLIEcj5GuR2RSTnxNKdkK0dJ/GrC7P38sUkiDmDuHfsHmbagTFAxDVIBltoklXEVIQ/f14IL8IMJ5pn9Hez1Ew==",
+      "license": "ISC"
+    },
+    "node_modules/are-we-there-yet": {
+      "version": "2.0.0",
+      "resolved": "https://registry.npmjs.org/are-we-there-yet/-/are-we-there-yet-2.0.0.tgz",
+      "integrity": "sha512-Ci/qENmwHnsYo9xKIcUJN5LeDKdJ6R1Z1j9V/J5wyq8nh/mYPEpIKJbBZXtZjG04HiK7zV/p6Vs9952MrMeUIw==",
+      "deprecated": "This package is no longer supported.",
+      "license": "ISC",
+      "dependencies": {
+        "delegates": "^1.0.0",
+        "readable-stream": "^3.6.0"
+      },
+      "engines": {
+        "node": ">=10"
+      }
+    },
+    "node_modules/array-flatten": {
+      "version": "1.1.1",
+      "resolved": "https://registry.npmjs.org/array-flatten/-/array-flatten-1.1.1.tgz",
+      "integrity": "sha512-PCVAQswWemu6UdxsDFFX/+gVeYqKAod3D3UVm91jHwynguOwAvYPhx8nNlM++NqRcK6CxxpUafjmhIdKiHibqg==",
+      "license": "MIT"
+    },
+    "node_modules/balanced-match": {
+      "version": "1.0.2",
+      "resolved": "https://registry.npmjs.org/balanced-match/-/balanced-match-1.0.2.tgz",
+      "integrity": "sha512-3oSeUO0TMV67hN1AmbXsK4yaqU7tjiHlbxRDZOpH0KW9+CeX4bRAaX0Anxt0tx2MrpRpWwQaPwIlISEJhYU5Pw==",
+      "license": "MIT"
+    },
+    "node_modules/base64-js": {
+      "version": "1.5.1",
+      "resolved": "https://registry.npmjs.org/base64-js/-/base64-js-1.5.1.tgz",
+      "integrity": "sha512-AKpaYlHn8t4SVbOHCy+b5+KKgvR4vrsD8vbvrbiQJps7fKDTkjkDry6ji0rUJjC0kzbNePLwzxq8iypo41qeWA==",
+      "funding": [
+        {
+          "type": "github",
+          "url": "https://github.com/sponsors/feross"
+        },
+        {
+          "type": "patreon",
+          "url": "https://www.patreon.com/feross"
+        },
+        {
+          "type": "consulting",
+          "url": "https://feross.org/support"
+        }
+      ],
+      "license": "MIT"
+    },
+    "node_modules/bcrypt": {
+      "version": "5.1.1",
+      "resolved": "https://registry.npmjs.org/bcrypt/-/bcrypt-5.1.1.tgz",
+      "integrity": "sha512-AGBHOG5hPYZ5Xl9KXzU5iKq9516yEmvCKDg3ecP5kX2aB6UqTeXZxk2ELnDgDm6BQSMlLt9rDB4LoSMx0rYwww==",
+      "hasInstallScript": true,
+      "license": "MIT",
+      "dependencies": {
+        "@mapbox/node-pre-gyp": "^1.0.11",
+        "node-addon-api": "^5.0.0"
+      },
+      "engines": {
+        "node": ">= 10.0.0"
+      }
+    },
+    "node_modules/better-sqlite3": {
+      "version": "11.10.0",
+      "resolved": "https://registry.npmjs.org/better-sqlite3/-/better-sqlite3-11.10.0.tgz",
+      "integrity": "sha512-EwhOpyXiOEL/lKzHz9AW1msWFNzGc/z+LzeB3/jnFJpxu+th2yqvzsSWas1v9jgs9+xiXJcD5A8CJxAG2TaghQ==",
+      "hasInstallScript": true,
+      "license": "MIT",
+      "dependencies": {
+        "bindings": "^1.5.0",
+        "prebuild-install": "^7.1.1"
+      }
+    },
+    "node_modules/bindings": {
+      "version": "1.5.0",
+      "resolved": "https://registry.npmjs.org/bindings/-/bindings-1.5.0.tgz",
+      "integrity": "sha512-p2q/t/mhvuOj/UeLlV6566GD/guowlr0hHxClI0W9m7MWYkL1F0hLo+0Aexs9HSPCtR1SXQ0TD3MMKrXZajbiQ==",
+      "license": "MIT",
+      "dependencies": {
+        "file-uri-to-path": "1.0.0"
+      }
+    },
+    "node_modules/bl": {
+      "version": "4.1.0",
+      "resolved": "https://registry.npmjs.org/bl/-/bl-4.1.0.tgz",
+      "integrity": "sha512-1W07cM9gS6DcLperZfFSj+bWLtaPGSOHWhPiGzXmvVJbRLdG82sH/Kn8EtW1VqWVA54AKf2h5k5BbnIbwF3h6w==",
+      "license": "MIT",
+      "dependencies": {
+        "buffer": "^5.5.0",
+        "inherits": "^2.0.4",
+        "readable-stream": "^3.4.0"
+      }
+    },
+    "node_modules/body-parser": {
+      "version": "1.20.6",
+      "resolved": "https://registry.npmjs.org/body-parser/-/body-parser-1.20.6.tgz",
+      "integrity": "sha512-p5tAzS57i5MV9fZFDj9LeIiTZEufbSe2eDozP+ElheSUq1m74CRq1jI4mYNDdVs9vQztXFLuk/Gd6BWTdwRJ5g==",
+      "license": "MIT",
+      "dependencies": {
+        "bytes": "~3.1.2",
+        "content-type": "~1.0.5",
+        "debug": "2.6.9",
+        "depd": "2.0.0",
+        "destroy": "~1.2.0",
+        "http-errors": "~2.0.1",
+        "iconv-lite": "~0.4.24",
+        "on-finished": "~2.4.1",
+        "qs": "~6.15.1",
+        "raw-body": "~2.5.3",
+        "type-is": "~1.6.18",
+        "unpipe": "~1.0.0"
+      },
+      "engines": {
+        "node": ">= 0.8",
+        "npm": "1.2.8000 || >= 1.4.16"
+      }
+    },
+    "node_modules/body-parser/node_modules/debug": {
+      "version": "2.6.9",
+      "resolved": "https://registry.npmjs.org/debug/-/debug-2.6.9.tgz",
+      "integrity": "sha512-bC7ElrdJaJnPbAP+1EotYvqZsb3ecl5wi6Bfi6BJTUcNowp6cvspg0jXznRTKDjm/E7AdgFBVeAPVMNcKGsHMA==",
+      "license": "MIT",
+      "dependencies": {
+        "ms": "2.0.0"
+      }
+    },
+    "node_modules/body-parser/node_modules/ms": {
+      "version": "2.0.0",
+      "resolved": "https://registry.npmjs.org/ms/-/ms-2.0.0.tgz",
+      "integrity": "sha512-Tpp60P6IUJDTuOq/5Z8cdskzJujfwqfOTkrwIwj7IRISpnkJnT6SyJ4PCPnGMoFjC9ddhal5KVIYtAt97ix05A==",
+      "license": "MIT"
+    },
+    "node_modules/brace-expansion": {
+      "version": "1.1.18",
+      "resolved": "https://registry.npmjs.org/brace-expansion/-/brace-expansion-1.1.18.tgz",
+      "integrity": "sha512-Edep/X9fGqVNmzKBVsDYIOtD+z1tuezV70LBjdCst9Tqu76lsnvRiZ6oTic1n+/BIwX6QDGAO94PN4N2SADvtw==",
+      "license": "MIT",
+      "dependencies": {
+        "balanced-match": "^1.0.0",
+        "concat-map": "0.0.1"
+      }
+    },
+    "node_modules/buffer": {
+      "version": "5.7.1",
+      "resolved": "https://registry.npmjs.org/buffer/-/buffer-5.7.1.tgz",
+      "integrity": "sha512-EHcyIPBQ4BSGlvjB16k5KgAJ27CIsHY/2JBmCRReo48y9rQ3MaUzWX3KVlBa4U7MyX02HdVj0K7C3WaB3ju7FQ==",
+      "funding": [
+        {
+          "type": "github",
+          "url": "https://github.com/sponsors/feross"
+        },
+        {
+          "type": "patreon",
+          "url": "https://www.patreon.com/feross"
+        },
+        {
+          "type": "consulting",
+          "url": "https://feross.org/support"
+        }
+      ],
+      "license": "MIT",
+      "dependencies": {
+        "base64-js": "^1.3.1",
+        "ieee754": "^1.1.13"
+      }
+    },
+    "node_modules/bytes": {
+      "version": "3.1.2",
+      "resolved": "https://registry.npmjs.org/bytes/-/bytes-3.1.2.tgz",
+      "integrity": "sha512-/Nf7TyzTx6S3yRJObOAV7956r8cr2+Oj8AC5dt8wSP3BQAoeX58NoHyCU8P8zGkNXStjTSi6fzO6F0pBdcYbEg==",
+      "license": "MIT",
+      "engines": {
+        "node": ">= 0.8"
+      }
+    },
+    "node_modules/call-bind-apply-helpers": {
+      "version": "1.0.2",
+      "resolved": "https://registry.npmjs.org/call-bind-apply-helpers/-/call-bind-apply-helpers-1.0.2.tgz",
+      "integrity": "sha512-Sp1ablJ0ivDkSzjcaJdxEunN5/XvksFJ2sMBFfq6x0ryhQV/2b/KwFe21cMpmHtPOSij8K99/wSfoEuTObmuMQ==",
+      "license": "MIT",
+      "dependencies": {
+        "es-errors": "^1.3.0",
+        "function-bind": "^1.1.2"
+      },
+      "engines": {
+        "node": ">= 0.4"
+      }
+    },
+    "node_modules/call-bound": {
+      "version": "1.0.4",
+      "resolved": "https://registry.npmjs.org/call-bound/-/call-bound-1.0.4.tgz",
+      "integrity": "sha512-+ys997U96po4Kx/ABpBCqhA9EuxJaQWDQg7295H4hBphv3IZg0boBKuwYpt4YXp6MZ5AmZQnU/tyMTlRpaSejg==",
+      "license": "MIT",
+      "dependencies": {
+        "call-bind-apply-helpers": "^1.0.2",
+        "get-intrinsic": "^1.3.0"
+      },
+      "engines": {
+        "node": ">= 0.4"
+      },
+      "funding": {
+        "url": "https://github.com/sponsors/ljharb"
+      }
+    },
+    "node_modules/chownr": {
+      "version": "2.0.0",
+      "resolved": "https://registry.npmjs.org/chownr/-/chownr-2.0.0.tgz",
+      "integrity": "sha512-bIomtDF5KGpdogkLd9VspvFzk9KfpyyGlS8YFVZl7TGPBHL5snIOnxeshwVgPteQ9b4Eydl+pVbIyE1DcvCWgQ==",
+      "license": "ISC",
+      "engines": {
+        "node": ">=10"
+      }
+    },
+    "node_modules/color-support": {
+      "version": "1.1.3",
+      "resolved": "https://registry.npmjs.org/color-support/-/color-support-1.1.3.tgz",
+      "integrity": "sha512-qiBjkpbMLO/HL68y+lh4q0/O1MZFj2RX6X/KmMa3+gJD3z+WwI1ZzDHysvqHGS3mP6mznPckpXmw1nI9cJjyRg==",
+      "license": "ISC",
+      "bin": {
+        "color-support": "bin.js"
+      }
+    },
+    "node_modules/concat-map": {
+      "version": "0.0.1",
+      "resolved": "https://registry.npmjs.org/concat-map/-/concat-map-0.0.1.tgz",
+      "integrity": "sha512-/Srv4dswyQNBfohGpz9o6Yb3Gz3SrUDqBH5rTuhGR7ahtlbYKnVxw2bCFMRljaA7EXHaXZ8wsHdodFvbkhKmqg==",
+      "license": "MIT"
+    },
+    "node_modules/console-control-strings": {
+      "version": "1.1.0",
+      "resolved": "https://registry.npmjs.org/console-control-strings/-/console-control-strings-1.1.0.tgz",
+      "integrity": "sha512-ty/fTekppD2fIwRvnZAVdeOiGd1c7YXEixbgJTNzqcxJWKQnjJ/V1bNEEE6hygpM3WjwHFUVK6HTjWSzV4a8sQ==",
+      "license": "ISC"
+    },
+    "node_modules/content-disposition": {
+      "version": "0.5.4",
+      "resolved": "https://registry.npmjs.org/content-disposition/-/content-disposition-0.5.4.tgz",
+      "integrity": "sha512-FveZTNuGw04cxlAiWbzi6zTAL/lhehaWbTtgluJh4/E95DqMwTmha3KZN1aAWA8cFIhHzMZUvLevkw5Rqk+tSQ==",
+      "license": "MIT",
+      "dependencies": {
+        "safe-buffer": "5.2.1"
+      },
+      "engines": {
+        "node": ">= 0.6"
+      }
+    },
+    "node_modules/content-type": {
+      "version": "1.0.5",
+      "resolved": "https://registry.npmjs.org/content-type/-/content-type-1.0.5.tgz",
+      "integrity": "sha512-nTjqfcBFEipKdXCv4YDQWCfmcLZKm81ldF0pAopTvyrFGVbcR6P/VAAd5G7N+0tTr8QqiU0tFadD6FK4NtJwOA==",
+      "license": "MIT",
+      "engines": {
+        "node": ">= 0.6"
+      }
+    },
+    "node_modules/cookie": {
+      "version": "0.7.2",
+      "resolved": "https://registry.npmjs.org/cookie/-/cookie-0.7.2.tgz",
+      "integrity": "sha512-yki5XnKuf750l50uGTllt6kKILY4nQ1eNIQatoXEByZ5dWgnKqbnqmTrBE5B4N7lrMJKQ2ytWMiTO2o0v6Ew/w==",
+      "license": "MIT",
+      "engines": {
+        "node": ">= 0.6"
+      }
+    },
+    "node_modules/cookie-session": {
+      "version": "2.1.1",
+      "resolved": "https://registry.npmjs.org/cookie-session/-/cookie-session-2.1.1.tgz",
+      "integrity": "sha512-ji3kym/XZaFVew1+tIZk5ZLp9Z/fLv9rK1aZmpug0FsgE7Cu3ZDrUdRo7FT9vFjMYfNimrrUHJzywDwT7XEFlg==",
+      "license": "MIT",
+      "dependencies": {
+        "cookies": "0.9.1",
+        "debug": "3.2.7",
+        "on-headers": "~1.1.0",
+        "safe-buffer": "5.2.1"
+      },
+      "engines": {
+        "node": ">= 0.10"
+      }
+    },
+    "node_modules/cookie-signature": {
+      "version": "1.0.7",
+      "resolved": "https://registry.npmjs.org/cookie-signature/-/cookie-signature-1.0.7.tgz",
+      "integrity": "sha512-NXdYc3dLr47pBkpUCHtKSwIOQXLVn8dZEuywboCOJY/osA0wFSLlSawr3KN8qXJEyX66FcONTH8EIlVuK0yyFA==",
+      "license": "MIT"
+    },
+    "node_modules/cookies": {
+      "version": "0.9.1",
+      "resolved": "https://registry.npmjs.org/cookies/-/cookies-0.9.1.tgz",
+      "integrity": "sha512-TG2hpqe4ELx54QER/S3HQ9SRVnQnGBtKUz5bLQWtYAQ+o6GpgMs6sYUvaiJjVxb+UXwhRhAEP3m7LbsIZ77Hmw==",
+      "license": "MIT",
+      "dependencies": {
+        "depd": "~2.0.0",
+        "keygrip": "~1.1.0"
+      },
+      "engines": {
+        "node": ">= 0.8"
+      }
+    },
+    "node_modules/cors": {
+      "version": "2.8.6",
+      "resolved": "https://registry.npmjs.org/cors/-/cors-2.8.6.tgz",
+      "integrity": "sha512-tJtZBBHA6vjIAaF6EnIaq6laBBP9aq/Y3ouVJjEfoHbRBcHBAHYcMh/w8LDrk2PvIMMq8gmopa5D4V8RmbrxGw==",
+      "license": "MIT",
+      "dependencies": {
+        "object-assign": "^4",
+        "vary": "^1"
+      },
+      "engines": {
+        "node": ">= 0.10"
+      },
+      "funding": {
+        "type": "opencollective",
+        "url": "https://opencollective.com/express"
+      }
+    },
+    "node_modules/debug": {
+      "version": "3.2.7",
+      "resolved": "https://registry.npmjs.org/debug/-/debug-3.2.7.tgz",
+      "integrity": "sha512-CFjzYYAi4ThfiQvizrFQevTTXHtnCqWfe7x1AhgEscTz6ZbLbfoLRLPugTQyBth6f8ZERVUSyWHFD/7Wu4t1XQ==",
+      "license": "MIT",
+      "dependencies": {
+        "ms": "^2.1.1"
+      }
+    },
+    "node_modules/decompress-response": {
+      "version": "6.0.0",
+      "resolved": "https://registry.npmjs.org/decompress-response/-/decompress-response-6.0.0.tgz",
+      "integrity": "sha512-aW35yZM6Bb/4oJlZncMH2LCoZtJXTRxES17vE3hoRiowU2kWHaJKFkSBDnDR+cm9J+9QhXmREyIfv0pji9ejCQ==",
+      "license": "MIT",
+      "dependencies": {
+        "mimic-response": "^3.1.0"
+      },
+      "engines": {
+        "node": ">=10"
+      },
+      "funding": {
+        "url": "https://github.com/sponsors/sindresorhus"
+      }
+    },
+    "node_modules/deep-extend": {
+      "version": "0.6.0",
+      "resolved": "https://registry.npmjs.org/deep-extend/-/deep-extend-0.6.0.tgz",
+      "integrity": "sha512-LOHxIOaPYdHlJRtCQfDIVZtfw/ufM8+rVj649RIHzcm/vGwQRXFt6OPqIFWsm2XEMrNIEtWR64sY1LEKD2vAOA==",
+      "license": "MIT",
+      "engines": {
+        "node": ">=4.0.0"
+      }
+    },
+    "node_modules/delegates": {
+      "version": "1.0.0",
+      "resolved": "https://registry.npmjs.org/delegates/-/delegates-1.0.0.tgz",
+      "integrity": "sha512-bd2L678uiWATM6m5Z1VzNCErI3jiGzt6HGY8OVICs40JQq/HALfbyNJmp0UDakEY4pMMaN0Ly5om/B1VI/+xfQ==",
+      "license": "MIT"
+    },
+    "node_modules/depd": {
+      "version": "2.0.0",
+      "resolved": "https://registry.npmjs.org/depd/-/depd-2.0.0.tgz",
+      "integrity": "sha512-g7nH6P6dyDioJogAAGprGpCtVImJhpPk/roCzdb3fIh61/s/nPsfR6onyMwkCAR/OlC3yBC0lESvUoQEAssIrw==",
+      "license": "MIT",
+      "engines": {
+        "node": ">= 0.8"
+      }
+    },
+    "node_modules/destroy": {
+      "version": "1.2.0",
+      "resolved": "https://registry.npmjs.org/destroy/-/destroy-1.2.0.tgz",
+      "integrity": "sha512-2sJGJTaXIIaR1w4iJSNoN0hnMY7Gpc/n8D4qSCJw8QqFWXf7cuAgnEHxBpweaVcPevC2l3KpjYCx3NypQQgaJg==",
+      "license": "MIT",
+      "engines": {
+        "node": ">= 0.8",
+        "npm": "1.2.8000 || >= 1.4.16"
+      }
+    },
+    "node_modules/detect-libc": {
+      "version": "2.1.2",
+      "resolved": "https://registry.npmjs.org/detect-libc/-/detect-libc-2.1.2.tgz",
+      "integrity": "sha512-Btj2BOOO83o3WyH59e8MgXsxEQVcarkUOpEYrubB0urwnN10yQ364rsiByU11nZlqWYZm05i/of7io4mzihBtQ==",
+      "license": "Apache-2.0",
+      "engines": {
+        "node": ">=8"
+      }
+    },
+    "node_modules/dunder-proto": {
+      "version": "1.0.1",
+      "resolved": "https://registry.npmjs.org/dunder-proto/-/dunder-proto-1.0.1.tgz",
+      "integrity": "sha512-KIN/nDJBQRcXw0MLVhZE9iQHmG68qAVIBg9CqmUYjmQIhgij9U5MFvrqkUL5FbtyyzZuOeOt0zdeRe4UY7ct+A==",
+      "license": "MIT",
+      "dependencies": {
+        "call-bind-apply-helpers": "^1.0.1",
+        "es-errors": "^1.3.0",
+        "gopd": "^1.2.0"
+      },
+      "engines": {
+        "node": ">= 0.4"
+      }
+    },
+    "node_modules/ee-first": {
+      "version": "1.1.1",
+      "resolved": "https://registry.npmjs.org/ee-first/-/ee-first-1.1.1.tgz",
+      "integrity": "sha512-WMwm9LhRUo+WUaRN+vRuETqG89IgZphVSNkdFgeb6sS/E4OrDIN7t48CAewSHXc6C8lefD8KKfr5vY61brQlow==",
+      "license": "MIT"
+    },
+    "node_modules/emoji-regex": {
+      "version": "8.0.0",
+      "resolved": "https://registry.npmjs.org/emoji-regex/-/emoji-regex-8.0.0.tgz",
+      "integrity": "sha512-MSjYzcWNOA0ewAHpz0MxpYFvwg6yjy1NG3xteoqz644VCo/RPgnr1/GGt+ic3iJTzQ8Eu3TdM14SawnVUmGE6A==",
+      "license": "MIT"
+    },
+    "node_modules/encodeurl": {
+      "version": "2.0.0",
+      "resolved": "https://registry.npmjs.org/encodeurl/-/encodeurl-2.0.0.tgz",
+      "integrity": "sha512-Q0n9HRi4m6JuGIV1eFlmvJB7ZEVxu93IrMyiMsGC0lrMJMWzRgx6WGquyfQgZVb31vhGgXnfmPNNXmxnOkRBrg==",
+      "license": "MIT",
+      "engines": {
+        "node": ">= 0.8"
+      }
+    },
+    "node_modules/end-of-stream": {
+      "version": "1.4.5",
+      "resolved": "https://registry.npmjs.org/end-of-stream/-/end-of-stream-1.4.5.tgz",
+      "integrity": "sha512-ooEGc6HP26xXq/N+GCGOT0JKCLDGrq2bQUZrQ7gyrJiZANJ/8YDTxTpQBXGMn+WbIQXNVpyWymm7KYVICQnyOg==",
+      "license": "MIT",
+      "dependencies": {
+        "once": "^1.4.0"
+      }
+    },
+    "node_modules/es-define-property": {
+      "version": "1.0.1",
+      "resolved": "https://registry.npmjs.org/es-define-property/-/es-define-property-1.0.1.tgz",
+      "integrity": "sha512-e3nRfgfUZ4rNGL232gUgX06QNyyez04KdjFrF+LTRoOXmrOgFKDg4BCdsjW8EnT69eqdYGmRpJwiPVYNrCaW3g==",
+      "license": "MIT",
+      "engines": {
+        "node": ">= 0.4"
+      }
+    },
+    "node_modules/es-errors": {
+      "version": "1.3.0",
+      "resolved": "https://registry.npmjs.org/es-errors/-/es-errors-1.3.0.tgz",
+      "integrity": "sha512-Zf5H2Kxt2xjTvbJvP2ZWLEICxA6j+hAmMzIlypy4xcBg1vKVnx89Wy0GbS+kf5cwCVFFzdCFh2XSCFNULS6csw==",
+      "license": "MIT",
+      "engines": {
+        "node": ">= 0.4"
+      }
+    },
+    "node_modules/es-object-atoms": {
+      "version": "1.1.2",
+      "resolved": "https://registry.npmjs.org/es-object-atoms/-/es-object-atoms-1.1.2.tgz",
+      "integrity": "sha512-HWcBoN6NileqtSydK2FqHbS/LoDd2pqrnQHLyJzBj4kOp/ky2MWMN694xOfkK8/SnUsW2DH7EfyVlydKCsm1Zw==",
+      "license": "MIT",
+      "dependencies": {
+        "es-errors": "^1.3.0"
+      },
+      "engines": {
+        "node": ">= 0.4"
+      }
+    },
+    "node_modules/escape-html": {
+      "version": "1.0.3",
+      "resolved": "https://registry.npmjs.org/escape-html/-/escape-html-1.0.3.tgz",
+      "integrity": "sha512-NiSupZ4OeuGwr68lGIeym/ksIZMJodUGOSCZ/FSnTxcrekbvqrgdUxlJOMpijaKZVjAJrWrGs/6Jy8OMuyj9ow==",
+      "license": "MIT"
+    },
+    "node_modules/etag": {
+      "version": "1.8.1",
+      "resolved": "https://registry.npmjs.org/etag/-/etag-1.8.1.tgz",
+      "integrity": "sha512-aIL5Fx7mawVa300al2BnEE4iNvo1qETxLrPI/o05L7z6go7fCw1J6EQmbK4FmJ2AS7kgVF/KEZWufBfdClMcPg==",
+      "license": "MIT",
+      "engines": {
+        "node": ">= 0.6"
+      }
+    },
+    "node_modules/expand-template": {
+      "version": "2.0.3",
+      "resolved": "https://registry.npmjs.org/expand-template/-/expand-template-2.0.3.tgz",
+      "integrity": "sha512-XYfuKMvj4O35f/pOXLObndIRvyQ+/+6AhODh+OKWj9S9498pHHn/IMszH+gt0fBCRWMNfk1ZSp5x3AifmnI2vg==",
+      "license": "(MIT OR WTFPL)",
+      "engines": {
+        "node": ">=6"
+      }
+    },
+    "node_modules/express": {
+      "version": "4.22.2",
+      "resolved": "https://registry.npmjs.org/express/-/express-4.22.2.tgz",
+      "integrity": "sha512-IuL+Elrou2ZvCFHs18/CIzy2Nzvo25nZ1/D2eIZlz7c+QUayAcYoiM2BthCjs+EBHVpjYjcuLDAiCWgeIX3X1Q==",
+      "license": "MIT",
+      "dependencies": {
+        "accepts": "~1.3.8",
+        "array-flatten": "1.1.1",
+        "body-parser": "~1.20.5",
+        "content-disposition": "~0.5.4",
+        "content-type": "~1.0.4",
+        "cookie": "~0.7.1",
+        "cookie-signature": "~1.0.6",
+        "debug": "2.6.9",
+        "depd": "2.0.0",
+        "encodeurl": "~2.0.0",
+        "escape-html": "~1.0.3",
+        "etag": "~1.8.1",
+        "finalhandler": "~1.3.1",
+        "fresh": "~0.5.2",
+        "http-errors": "~2.0.0",
+        "merge-descriptors": "1.0.3",
+        "methods": "~1.1.2",
+        "on-finished": "~2.4.1",
+        "parseurl": "~1.3.3",
+        "path-to-regexp": "~0.1.12",
+        "proxy-addr": "~2.0.7",
+        "qs": "~6.15.1",
+        "range-parser": "~1.2.1",
+        "safe-buffer": "5.2.1",
+        "send": "~0.19.0",
+        "serve-static": "~1.16.2",
+        "setprototypeof": "1.2.0",
+        "statuses": "~2.0.1",
+        "type-is": "~1.6.18",
+        "utils-merge": "1.0.1",
+        "vary": "~1.1.2"
+      },
+      "engines": {
+        "node": ">= 0.10.0"
+      },
+      "funding": {
+        "type": "opencollective",
+        "url": "https://opencollective.com/express"
+      }
+    },
+    "node_modules/express/node_modules/debug": {
+      "version": "2.6.9",
+      "resolved": "https://registry.npmjs.org/debug/-/debug-2.6.9.tgz",
+      "integrity": "sha512-bC7ElrdJaJnPbAP+1EotYvqZsb3ecl5wi6Bfi6BJTUcNowp6cvspg0jXznRTKDjm/E7AdgFBVeAPVMNcKGsHMA==",
+      "license": "MIT",
+      "dependencies": {
+        "ms": "2.0.0"
+      }
+    },
+    "node_modules/express/node_modules/ms": {
+      "version": "2.0.0",
+      "resolved": "https://registry.npmjs.org/ms/-/ms-2.0.0.tgz",
+      "integrity": "sha512-Tpp60P6IUJDTuOq/5Z8cdskzJujfwqfOTkrwIwj7IRISpnkJnT6SyJ4PCPnGMoFjC9ddhal5KVIYtAt97ix05A==",
+      "license": "MIT"
+    },
+    "node_modules/file-uri-to-path": {
+      "version": "1.0.0",
+      "resolved": "https://registry.npmjs.org/file-uri-to-path/-/file-uri-to-path-1.0.0.tgz",
+      "integrity": "sha512-0Zt+s3L7Vf1biwWZ29aARiVYLx7iMGnEUl9x33fbB/j3jR81u/O2LbqK+Bm1CDSNDKVtJ/YjwY7TUd5SkeLQLw==",
+      "license": "MIT"
+    },
+    "node_modules/finalhandler": {
+      "version": "1.3.2",
+      "resolved": "https://registry.npmjs.org/finalhandler/-/finalhandler-1.3.2.tgz",
+      "integrity": "sha512-aA4RyPcd3badbdABGDuTXCMTtOneUCAYH/gxoYRTZlIJdF0YPWuGqiAsIrhNnnqdXGswYk6dGujem4w80UJFhg==",
+      "license": "MIT",
+      "dependencies": {
+        "debug": "2.6.9",
+        "encodeurl": "~2.0.0",
+        "escape-html": "~1.0.3",
+        "on-finished": "~2.4.1",
+        "parseurl": "~1.3.3",
+        "statuses": "~2.0.2",
+        "unpipe": "~1.0.0"
+      },
+      "engines": {
+        "node": ">= 0.8"
+      }
+    },
+    "node_modules/finalhandler/node_modules/debug": {
+      "version": "2.6.9",
+      "resolved": "https://registry.npmjs.org/debug/-/debug-2.6.9.tgz",
+      "integrity": "sha512-bC7ElrdJaJnPbAP+1EotYvqZsb3ecl5wi6Bfi6BJTUcNowp6cvspg0jXznRTKDjm/E7AdgFBVeAPVMNcKGsHMA==",
+      "license": "MIT",
+      "dependencies": {
+        "ms": "2.0.0"
+      }
+    },
+    "node_modules/finalhandler/node_modules/ms": {
+      "version": "2.0.0",
+      "resolved": "https://registry.npmjs.org/ms/-/ms-2.0.0.tgz",
+      "integrity": "sha512-Tpp60P6IUJDTuOq/5Z8cdskzJujfwqfOTkrwIwj7IRISpnkJnT6SyJ4PCPnGMoFjC9ddhal5KVIYtAt97ix05A==",
+      "license": "MIT"
+    },
+    "node_modules/forwarded": {
+      "version": "0.2.0",
+      "resolved": "https://registry.npmjs.org/forwarded/-/forwarded-0.2.0.tgz",
+      "integrity": "sha512-buRG0fpBtRHSTCOASe6hD258tEubFoRLb4ZNA6NxMVHNw2gOcwHo9wyablzMzOA5z9xA9L1KNjk/Nt6MT9aYow==",
+      "license": "MIT",
+      "engines": {
+        "node": ">= 0.6"
+      }
+    },
+    "node_modules/fresh": {
+      "version": "0.5.2",
+      "resolved": "https://registry.npmjs.org/fresh/-/fresh-0.5.2.tgz",
+      "integrity": "sha512-zJ2mQYM18rEFOudeV4GShTGIQ7RbzA7ozbU9I/XBpm7kqgMywgmylMwXHxZJmkVoYkna9d2pVXVXPdYTP9ej8Q==",
+      "license": "MIT",
+      "engines": {
+        "node": ">= 0.6"
+      }
+    },
+    "node_modules/fs-constants": {
+      "version": "1.0.0",
+      "resolved": "https://registry.npmjs.org/fs-constants/-/fs-constants-1.0.0.tgz",
+      "integrity": "sha512-y6OAwoSIf7FyjMIv94u+b5rdheZEjzR63GTyZJm5qh4Bi+2YgwLCcI/fPFZkL5PSixOt6ZNKm+w+Hfp/Bciwow==",
+      "license": "MIT"
+    },
+    "node_modules/fs-minipass": {
+      "version": "2.1.0",
+      "resolved": "https://registry.npmjs.org/fs-minipass/-/fs-minipass-2.1.0.tgz",
+      "integrity": "sha512-V/JgOLFCS+R6Vcq0slCuaeWEdNC3ouDlJMNIsacH2VtALiu9mV4LPrHc5cDl8k5aw6J8jwgWWpiTo5RYhmIzvg==",
+      "license": "ISC",
+      "dependencies": {
+        "minipass": "^3.0.0"
+      },
+      "engines": {
+        "node": ">= 8"
+      }
+    },
+    "node_modules/fs-minipass/node_modules/minipass": {
+      "version": "3.3.6",
+      "resolved": "https://registry.npmjs.org/minipass/-/minipass-3.3.6.tgz",
+      "integrity": "sha512-DxiNidxSEK+tHG6zOIklvNOwm3hvCrbUrdtzY74U6HKTJxvIDfOUL5W5P2Ghd3DTkhhKPYGqeNUIh5qcM4YBfw==",
+      "license": "ISC",
+      "dependencies": {
+        "yallist": "^4.0.0"
+      },
+      "engines": {
+        "node": ">=8"
+      }
+    },
+    "node_modules/fs.realpath": {
+      "version": "1.0.0",
+      "resolved": "https://registry.npmjs.org/fs.realpath/-/fs.realpath-1.0.0.tgz",
+      "integrity": "sha512-OO0pH2lK6a0hZnAdau5ItzHPI6pUlvI7jMVnxUQRtw4owF2wk8lOSabtGDCTP4Ggrg2MbGnWO9X8K1t4+fGMDw==",
+      "license": "ISC"
+    },
+    "node_modules/function-bind": {
+      "version": "1.1.2",
+      "resolved": "https://registry.npmjs.org/function-bind/-/function-bind-1.1.2.tgz",
+      "integrity": "sha512-7XHNxH7qX9xG5mIwxkhumTox/MIRNcOgDrxWsMt2pAr23WHp6MrRlN7FBSFpCpr+oVO0F744iUgR82nJMfG2SA==",
+      "license": "MIT",
+      "funding": {
+        "url": "https://github.com/sponsors/ljharb"
+      }
+    },
+    "node_modules/gauge": {
+      "version": "3.0.2",
+      "resolved": "https://registry.npmjs.org/gauge/-/gauge-3.0.2.tgz",
+      "integrity": "sha512-+5J6MS/5XksCuXq++uFRsnUd7Ovu1XenbeuIuNRJxYWjgQbPuFhT14lAvsWfqfAmnwluf1OwMjz39HjfLPci0Q==",
+      "deprecated": "This package is no longer supported.",
+      "license": "ISC",
+      "dependencies": {
+        "aproba": "^1.0.3 || ^2.0.0",
+        "color-support": "^1.1.2",
+        "console-control-strings": "^1.0.0",
+        "has-unicode": "^2.0.1",
+        "object-assign": "^4.1.1",
+        "signal-exit": "^3.0.0",
+        "string-width": "^4.2.3",
+        "strip-ansi": "^6.0.1",
+        "wide-align": "^1.1.2"
+      },
+      "engines": {
+        "node": ">=10"
+      }
+    },
+    "node_modules/get-intrinsic": {
+      "version": "1.3.0",
+      "resolved": "https://registry.npmjs.org/get-intrinsic/-/get-intrinsic-1.3.0.tgz",
+      "integrity": "sha512-9fSjSaos/fRIVIp+xSJlE6lfwhES7LNtKaCBIamHsjr2na1BiABJPo0mOjjz8GJDURarmCPGqaiVg5mfjb98CQ==",
+      "license": "MIT",
+      "dependencies": {
+        "call-bind-apply-helpers": "^1.0.2",
+        "es-define-property": "^1.0.1",
+        "es-errors": "^1.3.0",
+        "es-object-atoms": "^1.1.1",
+        "function-bind": "^1.1.2",
+        "get-proto": "^1.0.1",
+        "gopd": "^1.2.0",
+        "has-symbols": "^1.1.0",
+        "hasown": "^2.0.2",
+        "math-intrinsics": "^1.1.0"
+      },
+      "engines": {
+        "node": ">= 0.4"
+      },
+      "funding": {
+        "url": "https://github.com/sponsors/ljharb"
+      }
+    },
+    "node_modules/get-proto": {
+      "version": "1.0.1",
+      "resolved": "https://registry.npmjs.org/get-proto/-/get-proto-1.0.1.tgz",
+      "integrity": "sha512-sTSfBjoXBp89JvIKIefqw7U2CCebsc74kiY6awiGogKtoSGbgjYE/G/+l9sF3MWFPNc9IcoOC4ODfKHfxFmp0g==",
+      "license": "MIT",
+      "dependencies": {
+        "dunder-proto": "^1.0.1",
+        "es-object-atoms": "^1.0.0"
+      },
+      "engines": {
+        "node": ">= 0.4"
+      }
+    },
+    "node_modules/github-from-package": {
+      "version": "0.0.0",
+      "resolved": "https://registry.npmjs.org/github-from-package/-/github-from-package-0.0.0.tgz",
+      "integrity": "sha512-SyHy3T1v2NUXn29OsWdxmK6RwHD+vkj3v8en8AOBZ1wBQ/hCAQ5bAQTD02kW4W9tUp/3Qh6J8r9EvntiyCmOOw==",
+      "license": "MIT"
+    },
+    "node_modules/glob": {
+      "version": "7.2.3",
+      "resolved": "https://registry.npmjs.org/glob/-/glob-7.2.3.tgz",
+      "integrity": "sha512-nFR0zLpU2YCaRxwoCJvL6UvCH2JFyFVIvwTLsIf21AuHlMskA1hhTdk+LlYJtOlYt9v6dvszD2BGRqBL+iQK9Q==",
+      "deprecated": "Old versions of glob are not supported, and contain widely publicized security vulnerabilities, which have been fixed in the current version. Please update. Support for old versions may be purchased (at exorbitant rates) by contacting i@izs.me",
+      "license": "ISC",
+      "dependencies": {
+        "fs.realpath": "^1.0.0",
+        "inflight": "^1.0.4",
+        "inherits": "2",
+        "minimatch": "^3.1.1",
+        "once": "^1.3.0",
+        "path-is-absolute": "^1.0.0"
+      },
+      "engines": {
+        "node": "*"
+      },
+      "funding": {
+        "url": "https://github.com/sponsors/isaacs"
+      }
+    },
+    "node_modules/gopd": {
+      "version": "1.2.0",
+      "resolved": "https://registry.npmjs.org/gopd/-/gopd-1.2.0.tgz",
+      "integrity": "sha512-ZUKRh6/kUFoAiTAtTYPZJ3hw9wNxx+BIBOijnlG9PnrJsCcSjs1wyyD6vJpaYtgnzDrKYRSqf3OO6Rfa93xsRg==",
+      "license": "MIT",
+      "engines": {
+        "node": ">= 0.4"
+      },
+      "funding": {
+        "url": "https://github.com/sponsors/ljharb"
+      }
+    },
+    "node_modules/has-symbols": {
+      "version": "1.1.0",
+      "resolved": "https://registry.npmjs.org/has-symbols/-/has-symbols-1.1.0.tgz",
+      "integrity": "sha512-1cDNdwJ2Jaohmb3sg4OmKaMBwuC48sYni5HUw2DvsC8LjGTLK9h+eb1X6RyuOHe4hT0ULCW68iomhjUoKUqlPQ==",
+      "license": "MIT",
+      "engines": {
+        "node": ">= 0.4"
+      },
+      "funding": {
+        "url": "https://github.com/sponsors/ljharb"
+      }
+    },
+    "node_modules/has-unicode": {
+      "version": "2.0.1",
+      "resolved": "https://registry.npmjs.org/has-unicode/-/has-unicode-2.0.1.tgz",
+      "integrity": "sha512-8Rf9Y83NBReMnx0gFzA8JImQACstCYWUplepDa9xprwwtmgEZUF0h/i5xSA625zB/I37EtrswSST6OXxwaaIJQ==",
+      "license": "ISC"
+    },
+    "node_modules/hasown": {
+      "version": "2.0.4",
+      "resolved": "https://registry.npmjs.org/hasown/-/hasown-2.0.4.tgz",
+      "integrity": "sha512-T2UbfbBEF32wiepXIsMlTW9+dDYC6wMh/t/vYA4tuOMKqWz/n3vr1NFSxQiyP+zk2mXsoMA/i/7qV6LKut1t1A==",
+      "license": "MIT",
+      "dependencies": {
+        "function-bind": "^1.1.2"
+      },
+      "engines": {
+        "node": ">= 0.4"
+      }
+    },
+    "node_modules/http-errors": {
+      "version": "2.0.1",
+      "resolved": "https://registry.npmjs.org/http-errors/-/http-errors-2.0.1.tgz",
+      "integrity": "sha512-4FbRdAX+bSdmo4AUFuS0WNiPz8NgFt+r8ThgNWmlrjQjt1Q7ZR9+zTlce2859x4KSXrwIsaeTqDoKQmtP8pLmQ==",
+      "license": "MIT",
+      "dependencies": {
+        "depd": "~2.0.0",
+        "inherits": "~2.0.4",
+        "setprototypeof": "~1.2.0",
+        "statuses": "~2.0.2",
+        "toidentifier": "~1.0.1"
+      },
+      "engines": {
+        "node": ">= 0.8"
+      },
+      "funding": {
+        "type": "opencollective",
+        "url": "https://opencollective.com/express"
+      }
+    },
+    "node_modules/https-proxy-agent": {
+      "version": "5.0.1",
+      "resolved": "https://registry.npmjs.org/https-proxy-agent/-/https-proxy-agent-5.0.1.tgz",
+      "integrity": "sha512-dFcAjpTQFgoLMzC2VwU+C/CbS7uRL0lWmxDITmqm7C+7F0Odmj6s9l6alZc6AELXhrnggM2CeWSXHGOdX2YtwA==",
+      "license": "MIT",
+      "dependencies": {
+        "agent-base": "6",
+        "debug": "4"
+      },
+      "engines": {
+        "node": ">= 6"
+      }
+    },
+    "node_modules/https-proxy-agent/node_modules/debug": {
+      "version": "4.4.3",
+      "resolved": "https://registry.npmjs.org/debug/-/debug-4.4.3.tgz",
+      "integrity": "sha512-RGwwWnwQvkVfavKVt22FGLw+xYSdzARwm0ru6DhTVA3umU5hZc28V3kO4stgYryrTlLpuvgI9GiijltAjNbcqA==",
+      "license": "MIT",
+      "dependencies": {
+        "ms": "^2.1.3"
+      },
+      "engines": {
+        "node": ">=6.0"
+      },
+      "peerDependenciesMeta": {
+        "supports-color": {
+          "optional": true
+        }
+      }
+    },
+    "node_modules/iconv-lite": {
+      "version": "0.4.24",
+      "resolved": "https://registry.npmjs.org/iconv-lite/-/iconv-lite-0.4.24.tgz",
+      "integrity": "sha512-v3MXnZAcvnywkTUEZomIActle7RXXeedOR31wwl7VlyoXO4Qi9arvSenNQWne1TcRwhCL1HwLI21bEqdpj8/rA==",
+      "license": "MIT",
+      "dependencies": {
+        "safer-buffer": ">= 2.1.2 < 3"
+      },
+      "engines": {
+        "node": ">=0.10.0"
+      }
+    },
+    "node_modules/ieee754": {
+      "version": "1.2.1",
+      "resolved": "https://registry.npmjs.org/ieee754/-/ieee754-1.2.1.tgz",
+      "integrity": "sha512-dcyqhDvX1C46lXZcVqCpK+FtMRQVdIMN6/Df5js2zouUsqG7I6sFxitIC+7KYK29KdXOLHdu9zL4sFnoVQnqaA==",
+      "funding": [
+        {
+          "type": "github",
+          "url": "https://github.com/sponsors/feross"
+        },
+        {
+          "type": "patreon",
+          "url": "https://www.patreon.com/feross"
+        },
+        {
+          "type": "consulting",
+          "url": "https://feross.org/support"
+        }
+      ],
+      "license": "BSD-3-Clause"
+    },
+    "node_modules/inflight": {
+      "version": "1.0.6",
+      "resolved": "https://registry.npmjs.org/inflight/-/inflight-1.0.6.tgz",
+      "integrity": "sha512-k92I/b08q4wvFscXCLvqfsHCrjrF7yiXsQuIVvVE7N82W3+aqpzuUdBbfhWcy/FZR3/4IgflMgKLOsvPDrGCJA==",
+      "deprecated": "This module is not supported, and leaks memory. Do not use it. Check out lru-cache if you want a good and tested way to coalesce async requests by a key value, which is much more comprehensive and powerful.",
+      "license": "ISC",
+      "dependencies": {
+        "once": "^1.3.0",
+        "wrappy": "1"
+      }
+    },
+    "node_modules/inherits": {
+      "version": "2.0.4",
+      "resolved": "https://registry.npmjs.org/inherits/-/inherits-2.0.4.tgz",
+      "integrity": "sha512-k/vGaX4/Yla3WzyMCvTQOXYeIHvqOKtnqBduzTHpzpQZzAskKMhZ2K+EnBiSM9zGSoIFeMpXKxa4dYeZIQqewQ==",
+      "license": "ISC"
+    },
+    "node_modules/ini": {
+      "version": "1.3.8",
+      "resolved": "https://registry.npmjs.org/ini/-/ini-1.3.8.tgz",
+      "integrity": "sha512-JV/yugV2uzW5iMRSiZAyDtQd+nxtUnjeLt0acNdw98kKLrvuRVyB80tsREOE7yvGVgalhZ6RNXCmEHkUKBKxew==",
+      "license": "ISC"
+    },
+    "node_modules/ipaddr.js": {
+      "version": "1.9.1",
+      "resolved": "https://registry.npmjs.org/ipaddr.js/-/ipaddr.js-1.9.1.tgz",
+      "integrity": "sha512-0KI/607xoxSToH7GjN1FfSbLoU0+btTicjsQSWQlh/hZykN8KpmMf7uYwPW3R+akZ6R/w18ZlXSHBYXiYUPO3g==",
+      "license": "MIT",
+      "engines": {
+        "node": ">= 0.10"
+      }
+    },
+    "node_modules/is-fullwidth-code-point": {
+      "version": "3.0.0",
+      "resolved": "https://registry.npmjs.org/is-fullwidth-code-point/-/is-fullwidth-code-point-3.0.0.tgz",
+      "integrity": "sha512-zymm5+u+sCsSWyD9qNaejV3DFvhCKclKdizYaJUuHA83RLjb7nSuGnddCHGv0hk+KY7BMAlsWeK4Ueg6EV6XQg==",
+      "license": "MIT",
+      "engines": {
+        "node": ">=8"
+      }
+    },
+    "node_modules/keygrip": {
+      "version": "1.1.0",
+      "resolved": "https://registry.npmjs.org/keygrip/-/keygrip-1.1.0.tgz",
+      "integrity": "sha512-iYSchDJ+liQ8iwbSI2QqsQOvqv58eJCEanyJPJi+Khyu8smkcKSFUCbPwzFcL7YVtZ6eONjqRX/38caJ7QjRAQ==",
+      "license": "MIT",
+      "dependencies": {
+        "tsscmp": "1.0.6"
+      },
+      "engines": {
+        "node": ">= 0.6"
+      }
+    },
+    "node_modules/make-dir": {
+      "version": "3.1.0",
+      "resolved": "https://registry.npmjs.org/make-dir/-/make-dir-3.1.0.tgz",
+      "integrity": "sha512-g3FeP20LNwhALb/6Cz6Dd4F2ngze0jz7tbzrD2wAV+o9FeNHe4rL+yK2md0J/fiSf1sa1ADhXqi5+oVwOM/eGw==",
+      "license": "MIT",
+      "dependencies": {
+        "semver": "^6.0.0"
+      },
+      "engines": {
+        "node": ">=8"
+      },
+      "funding": {
+        "url": "https://github.com/sponsors/sindresorhus"
+      }
+    },
+    "node_modules/make-dir/node_modules/semver": {
+      "version": "6.3.1",
+      "resolved": "https://registry.npmjs.org/semver/-/semver-6.3.1.tgz",
+      "integrity": "sha512-BR7VvDCVHO+q2xBEWskxS6DJE1qRnb7DxzUrogb71CWoSficBxYsiAGd+Kl0mmq/MprG9yArRkyrQxTO6XjMzA==",
+      "license": "ISC",
+      "bin": {
+        "semver": "bin/semver.js"
+      }
+    },
+    "node_modules/math-intrinsics": {
+      "version": "1.1.0",
+      "resolved": "https://registry.npmjs.org/math-intrinsics/-/math-intrinsics-1.1.0.tgz",
+      "integrity": "sha512-/IXtbwEk5HTPyEwyKX6hGkYXxM9nbj64B+ilVJnC/R6B0pH5G4V3b0pVbL7DBj4tkhBAppbQUlf6F6Xl9LHu1g==",
+      "license": "MIT",
+      "engines": {
+        "node": ">= 0.4"
+      }
+    },
+    "node_modules/media-typer": {
+      "version": "0.3.0",
+      "resolved": "https://registry.npmjs.org/media-typer/-/media-typer-0.3.0.tgz",
+      "integrity": "sha512-dq+qelQ9akHpcOl/gUVRTxVIOkAJ1wR3QAvb4RsVjS8oVoFjDGTc679wJYmUmknUF5HwMLOgb5O+a3KxfWapPQ==",
+      "license": "MIT",
+      "engines": {
+        "node": ">= 0.6"
+      }
+    },
+    "node_modules/merge-descriptors": {
+      "version": "1.0.3",
+      "resolved": "https://registry.npmjs.org/merge-descriptors/-/merge-descriptors-1.0.3.tgz",
+      "integrity": "sha512-gaNvAS7TZ897/rVaZ0nMtAyxNyi/pdbjbAwUpFQpN70GqnVfOiXpeUUMKRBmzXaSQ8DdTX4/0ms62r2K+hE6mQ==",
+      "license": "MIT",
+      "funding": {
+        "url": "https://github.com/sponsors/sindresorhus"
+      }
+    },
+    "node_modules/methods": {
+      "version": "1.1.2",
+      "resolved": "https://registry.npmjs.org/methods/-/methods-1.1.2.tgz",
+      "integrity": "sha512-iclAHeNqNm68zFtnZ0e+1L2yUIdvzNoauKU4WBA3VvH/vPFieF7qfRlwUZU+DA9P9bPXIS90ulxoUoCH23sV2w==",
+      "license": "MIT",
+      "engines": {
+        "node": ">= 0.6"
+      }
+    },
+    "node_modules/mime": {
+      "version": "1.6.0",
+      "resolved": "https://registry.npmjs.org/mime/-/mime-1.6.0.tgz",
+      "integrity": "sha512-x0Vn8spI+wuJ1O6S7gnbaQg8Pxh4NNHb7KSINmEWKiPE4RKOplvijn+NkmYmmRgP68mc70j2EbeTFRsrswaQeg==",
+      "license": "MIT",
+      "bin": {
+        "mime": "cli.js"
+      },
+      "engines": {
+        "node": ">=4"
+      }
+    },
+    "node_modules/mime-db": {
+      "version": "1.52.0",
+      "resolved": "https://registry.npmjs.org/mime-db/-/mime-db-1.52.0.tgz",
+      "integrity": "sha512-sPU4uV7dYlvtWJxwwxHD0PuihVNiE7TyAbQ5SWxDCB9mUYvOgroQOwYQQOKPJ8CIbE+1ETVlOoK1UC2nU3gYvg==",
+      "license": "MIT",
+      "engines": {
+        "node": ">= 0.6"
+      }
+    },
+    "node_modules/mime-types": {
+      "version": "2.1.35",
+      "resolved": "https://registry.npmjs.org/mime-types/-/mime-types-2.1.35.tgz",
+      "integrity": "sha512-ZDY+bPm5zTTF+YpCrAU9nK0UgICYPT0QtT1NZWFv4s++TNkcgVaT0g6+4R2uI4MjQjzysHB1zxuWL50hzaeXiw==",
+      "license": "MIT",
+      "dependencies": {
+        "mime-db": "1.52.0"
+      },
+      "engines": {
+        "node": ">= 0.6"
+      }
+    },
+    "node_modules/mimic-response": {
+      "version": "3.1.0",
+      "resolved": "https://registry.npmjs.org/mimic-response/-/mimic-response-3.1.0.tgz",
+      "integrity": "sha512-z0yWI+4FDrrweS8Zmt4Ej5HdJmky15+L2e6Wgn3+iK5fWzb6T3fhNFq2+MeTRb064c6Wr4N/wv0DzQTjNzHNGQ==",
+      "license": "MIT",
+      "engines": {
+        "node": ">=10"
+      },
+      "funding": {
+        "url": "https://github.com/sponsors/sindresorhus"
+      }
+    },
+    "node_modules/minimatch": {
+      "version": "3.1.5",
+      "resolved": "https://registry.npmjs.org/minimatch/-/minimatch-3.1.5.tgz",
+      "integrity": "sha512-VgjWUsnnT6n+NUk6eZq77zeFdpW2LWDzP6zFGrCbHXiYNul5Dzqk2HHQ5uFH2DNW5Xbp8+jVzaeNt94ssEEl4w==",
+      "license": "ISC",
+      "dependencies": {
+        "brace-expansion": "^1.1.7"
+      },
+      "engines": {
+        "node": "*"
+      }
+    },
+    "node_modules/minimist": {
+      "version": "1.2.8",
+      "resolved": "https://registry.npmjs.org/minimist/-/minimist-1.2.8.tgz",
+      "integrity": "sha512-2yyAR8qBkN3YuheJanUpWC5U3bb5osDywNB8RzDVlDwDHbocAJveqqj1u8+SVD7jkWT4yvsHCpWqqWqAxb0zCA==",
+      "license": "MIT",
+      "funding": {
+        "url": "https://github.com/sponsors/ljharb"
+      }
+    },
+    "node_modules/minipass": {
+      "version": "5.0.0",
+      "resolved": "https://registry.npmjs.org/minipass/-/minipass-5.0.0.tgz",
+      "integrity": "sha512-3FnjYuehv9k6ovOEbyOswadCDPX1piCfhV8ncmYtHOjuPwylVWsghTLo7rabjC3Rx5xD4HDx8Wm1xnMF7S5qFQ==",
+      "license": "ISC",
+      "engines": {
+        "node": ">=8"
+      }
+    },
+    "node_modules/minizlib": {
+      "version": "2.1.2",
+      "resolved": "https://registry.npmjs.org/minizlib/-/minizlib-2.1.2.tgz",
+      "integrity": "sha512-bAxsR8BVfj60DWXHE3u30oHzfl4G7khkSuPW+qvpd7jFRHm7dLxOjUk1EHACJ/hxLY8phGJ0YhYHZo7jil7Qdg==",
+      "license": "MIT",
+      "dependencies": {
+        "minipass": "^3.0.0",
+        "yallist": "^4.0.0"
+      },
+      "engines": {
+        "node": ">= 8"
+      }
+    },
+    "node_modules/minizlib/node_modules/minipass": {
+      "version": "3.3.6",
+      "resolved": "https://registry.npmjs.org/minipass/-/minipass-3.3.6.tgz",
+      "integrity": "sha512-DxiNidxSEK+tHG6zOIklvNOwm3hvCrbUrdtzY74U6HKTJxvIDfOUL5W5P2Ghd3DTkhhKPYGqeNUIh5qcM4YBfw==",
+      "license": "ISC",
+      "dependencies": {
+        "yallist": "^4.0.0"
+      },
+      "engines": {
+        "node": ">=8"
+      }
+    },
+    "node_modules/mkdirp": {
+      "version": "1.0.4",
+      "resolved": "https://registry.npmjs.org/mkdirp/-/mkdirp-1.0.4.tgz",
+      "integrity": "sha512-vVqVZQyf3WLx2Shd0qJ9xuvqgAyKPLAiqITEtqW0oIUjzo3PePDd6fW9iFz30ef7Ysp/oiWqbhszeGWW2T6Gzw==",
+      "license": "MIT",
+      "bin": {
+        "mkdirp": "bin/cmd.js"
+      },
+      "engines": {
+        "node": ">=10"
+      }
+    },
+    "node_modules/mkdirp-classic": {
+      "version": "0.5.3",
+      "resolved": "https://registry.npmjs.org/mkdirp-classic/-/mkdirp-classic-0.5.3.tgz",
+      "integrity": "sha512-gKLcREMhtuZRwRAfqP3RFW+TK4JqApVBtOIftVgjuABpAtpxhPGaDcfvbhNvD0B8iD1oUr/txX35NjcaY6Ns/A==",
+      "license": "MIT"
+    },
+    "node_modules/ms": {
+      "version": "2.1.3",
+      "resolved": "https://registry.npmjs.org/ms/-/ms-2.1.3.tgz",
+      "integrity": "sha512-6FlzubTLZG3J2a/NVCAleEhjzq5oxgHyaCU9yYXvcLsvoVaHJq/s5xXI6/XXP6tz7R9xAOtHnSO/tXtF3WRTlA==",
+      "license": "MIT"
+    },
+    "node_modules/napi-build-utils": {
+      "version": "2.0.0",
+      "resolved": "https://registry.npmjs.org/napi-build-utils/-/napi-build-utils-2.0.0.tgz",
+      "integrity": "sha512-GEbrYkbfF7MoNaoh2iGG84Mnf/WZfB0GdGEsM8wz7Expx/LlWf5U8t9nvJKXSp3qr5IsEbK04cBGhol/KwOsWA==",
+      "license": "MIT"
+    },
+    "node_modules/negotiator": {
+      "version": "0.6.3",
+      "resolved": "https://registry.npmjs.org/negotiator/-/negotiator-0.6.3.tgz",
+      "integrity": "sha512-+EUsqGPLsM+j/zdChZjsnX51g4XrHFOIXwfnCVPGlQk/k5giakcKsuxCObBRu6DSm9opw/O6slWbJdghQM4bBg==",
+      "license": "MIT",
+      "engines": {
+        "node": ">= 0.6"
+      }
+    },
+    "node_modules/node-abi": {
+      "version": "3.94.0",
+      "resolved": "https://registry.npmjs.org/node-abi/-/node-abi-3.94.0.tgz",
+      "integrity": "sha512-W5ZNO5KRPB5TkYmGVD9F6YqhsglXJzE6etpbmT+f6EQElhiX/UTG551cnsRGvLG3fyZEg9HwaDmNmj5nwJ4z9g==",
+      "license": "MIT",
+      "dependencies": {
+        "semver": "^7.3.5"
+      },
+      "engines": {
+        "node": ">=10"
+      }
+    },
+    "node_modules/node-addon-api": {
+      "version": "5.1.0",
+      "resolved": "https://registry.npmjs.org/node-addon-api/-/node-addon-api-5.1.0.tgz",
+      "integrity": "sha512-eh0GgfEkpnoWDq+VY8OyvYhFEzBk6jIYbRKdIlyTiAXIVJ8PyBaKb0rp7oDtoddbdoHWhq8wwr+XZ81F1rpNdA==",
+      "license": "MIT"
+    },
+    "node_modules/node-fetch": {
+      "version": "2.7.0",
+      "resolved": "https://registry.npmjs.org/node-fetch/-/node-fetch-2.7.0.tgz",
+      "integrity": "sha512-c4FRfUm/dbcWZ7U+1Wq0AwCyFL+3nt2bEw05wfxSz+DWpWsitgmSgYmy2dQdWyKC1694ELPqMs/YzUSNozLt8A==",
+      "license": "MIT",
+      "dependencies": {
+        "whatwg-url": "^5.0.0"
+      },
+      "engines": {
+        "node": "4.x || >=6.0.0"
+      },
+      "peerDependencies": {
+        "encoding": "^0.1.0"
+      },
+      "peerDependenciesMeta": {
+        "encoding": {
+          "optional": true
+        }
+      }
+    },
+    "node_modules/nopt": {
+      "version": "5.0.0",
+      "resolved": "https://registry.npmjs.org/nopt/-/nopt-5.0.0.tgz",
+      "integrity": "sha512-Tbj67rffqceeLpcRXrT7vKAN8CwfPeIBgM7E6iBkmKLV7bEMwpGgYLGv0jACUsECaa/vuxP0IjEont6umdMgtQ==",
+      "license": "ISC",
+      "dependencies": {
+        "abbrev": "1"
+      },
+      "bin": {
+        "nopt": "bin/nopt.js"
+      },
+      "engines": {
+        "node": ">=6"
+      }
+    },
+    "node_modules/npmlog": {
+      "version": "5.0.1",
+      "resolved": "https://registry.npmjs.org/npmlog/-/npmlog-5.0.1.tgz",
+      "integrity": "sha512-AqZtDUWOMKs1G/8lwylVjrdYgqA4d9nu8hc+0gzRxlDb1I10+FHBGMXs6aiQHFdCUUlqH99MUMuLfzWDNDtfxw==",
+      "deprecated": "This package is no longer supported.",
+      "license": "ISC",
+      "dependencies": {
+        "are-we-there-yet": "^2.0.0",
+        "console-control-strings": "^1.1.0",
+        "gauge": "^3.0.0",
+        "set-blocking": "^2.0.0"
+      }
+    },
+    "node_modules/object-assign": {
+      "version": "4.1.1",
+      "resolved": "https://registry.npmjs.org/object-assign/-/object-assign-4.1.1.tgz",
+      "integrity": "sha512-rJgTQnkUnH1sFw8yT6VSU3zD3sWmu6sZhIseY8VX+GRu3P6F7Fu+JNDoXfklElbLJSnc3FUQHVe4cU5hj+BcUg==",
+      "license": "MIT",
+      "engines": {
+        "node": ">=0.10.0"
+      }
+    },
+    "node_modules/object-inspect": {
+      "version": "1.13.4",
+      "resolved": "https://registry.npmjs.org/object-inspect/-/object-inspect-1.13.4.tgz",
+      "integrity": "sha512-W67iLl4J2EXEGTbfeHCffrjDfitvLANg0UlX3wFUUSTx92KXRFegMHUVgSqE+wvhAbi4WqjGg9czysTV2Epbew==",
+      "license": "MIT",
+      "engines": {
+        "node": ">= 0.4"
+      },
+      "funding": {
+        "url": "https://github.com/sponsors/ljharb"
+      }
+    },
+    "node_modules/on-finished": {
+      "version": "2.4.1",
+      "resolved": "https://registry.npmjs.org/on-finished/-/on-finished-2.4.1.tgz",
+      "integrity": "sha512-oVlzkg3ENAhCk2zdv7IJwd/QUD4z2RxRwpkcGY8psCVcCYZNq4wYnVWALHM+brtuJjePWiYF/ClmuDr8Ch5+kg==",
+      "license": "MIT",
+      "dependencies": {
+        "ee-first": "1.1.1"
+      },
+      "engines": {
+        "node": ">= 0.8"
+      }
+    },
+    "node_modules/on-headers": {
+      "version": "1.1.0",
+      "resolved": "https://registry.npmjs.org/on-headers/-/on-headers-1.1.0.tgz",
+      "integrity": "sha512-737ZY3yNnXy37FHkQxPzt4UZ2UWPWiCZWLvFZ4fu5cueciegX0zGPnrlY6bwRg4FdQOe9YU8MkmJwGhoMybl8A==",
+      "license": "MIT",
+      "engines": {
+        "node": ">= 0.8"
+      }
+    },
+    "node_modules/once": {
+      "version": "1.4.0",
+      "resolved": "https://registry.npmjs.org/once/-/once-1.4.0.tgz",
+      "integrity": "sha512-lNaJgI+2Q5URQBkccEKHTQOPaXdUxnZZElQTZY0MFUAuaEqe1E+Nyvgdz/aIyNi6Z9MzO5dv1H8n58/GELp3+w==",
+      "license": "ISC",
+      "dependencies": {
+        "wrappy": "1"
+      }
+    },
+    "node_modules/parseurl": {
+      "version": "1.3.3",
+      "resolved": "https://registry.npmjs.org/parseurl/-/parseurl-1.3.3.tgz",
+      "integrity": "sha512-CiyeOxFT/JZyN5m0z9PfXw4SCBJ6Sygz1Dpl0wqjlhDEGGBP1GnsUVEL0p63hoG1fcj3fHynXi9NYO4nWOL+qQ==",
+      "license": "MIT",
+      "engines": {
+        "node": ">= 0.8"
+      }
+    },
+    "node_modules/path-is-absolute": {
+      "version": "1.0.1",
+      "resolved": "https://registry.npmjs.org/path-is-absolute/-/path-is-absolute-1.0.1.tgz",
+      "integrity": "sha512-AVbw3UJ2e9bq64vSaS9Am0fje1Pa8pbGqTTsmXfaIiMpnr5DlDhfJOuLj9Sf95ZPVDAUerDfEk88MPmPe7UCQg==",
+      "license": "MIT",
+      "engines": {
+        "node": ">=0.10.0"
+      }
+    },
+    "node_modules/path-to-regexp": {
+      "version": "0.1.13",
+      "resolved": "https://registry.npmjs.org/path-to-regexp/-/path-to-regexp-0.1.13.tgz",
+      "integrity": "sha512-A/AGNMFN3c8bOlvV9RreMdrv7jsmF9XIfDeCd87+I8RNg6s78BhJxMu69NEMHBSJFxKidViTEdruRwEk/WIKqA==",
+      "license": "MIT"
+    },
+    "node_modules/prebuild-install": {
+      "version": "7.1.3",
+      "resolved": "https://registry.npmjs.org/prebuild-install/-/prebuild-install-7.1.3.tgz",
+      "integrity": "sha512-8Mf2cbV7x1cXPUILADGI3wuhfqWvtiLA1iclTDbFRZkgRQS0NqsPZphna9V+HyTEadheuPmjaJMsbzKQFOzLug==",
+      "deprecated": "No longer maintained. Please contact the author of the relevant native addon; alternatives are available.",
+      "license": "MIT",
+      "dependencies": {
+        "detect-libc": "^2.0.0",
+        "expand-template": "^2.0.3",
+        "github-from-package": "0.0.0",
+        "minimist": "^1.2.3",
+        "mkdirp-classic": "^0.5.3",
+        "napi-build-utils": "^2.0.0",
+        "node-abi": "^3.3.0",
+        "pump": "^3.0.0",
+        "rc": "^1.2.7",
+        "simple-get": "^4.0.0",
+        "tar-fs": "^2.0.0",
+        "tunnel-agent": "^0.6.0"
+      },
+      "bin": {
+        "prebuild-install": "bin.js"
+      },
+      "engines": {
+        "node": ">=10"
+      }
+    },
+    "node_modules/proxy-addr": {
+      "version": "2.0.7",
+      "resolved": "https://registry.npmjs.org/proxy-addr/-/proxy-addr-2.0.7.tgz",
+      "integrity": "sha512-llQsMLSUDUPT44jdrU/O37qlnifitDP+ZwrmmZcoSKyLKvtZxpyV0n2/bD/N4tBAAZ/gJEdZU7KMraoK1+XYAg==",
+      "license": "MIT",
+      "dependencies": {
+        "forwarded": "0.2.0",
+        "ipaddr.js": "1.9.1"
+      },
+      "engines": {
+        "node": ">= 0.10"
+      }
+    },
+    "node_modules/pump": {
+      "version": "3.0.4",
+      "resolved": "https://registry.npmjs.org/pump/-/pump-3.0.4.tgz",
+      "integrity": "sha512-VS7sjc6KR7e1ukRFhQSY5LM2uBWAUPiOPa/A3mkKmiMwSmRFUITt0xuj+/lesgnCv+dPIEYlkzrcyXgquIHMcA==",
+      "license": "MIT",
+      "dependencies": {
+        "end-of-stream": "^1.1.0",
+        "once": "^1.3.1"
+      }
+    },
+    "node_modules/qs": {
+      "version": "6.15.3",
+      "resolved": "https://registry.npmjs.org/qs/-/qs-6.15.3.tgz",
+      "integrity": "sha512-O9gl3zCl5h5blw1KGUzQKhA5oUXSl8rwUIM5o0S3nCXMliSvy5Dzx7/DJcI+SwgICv+IneSZwhBh1oSyEHA71A==",
+      "license": "BSD-3-Clause",
+      "dependencies": {
+        "es-define-property": "^1.0.1",
+        "side-channel": "^1.1.1"
+      },
+      "engines": {
+        "node": ">=0.6"
+      },
+      "funding": {
+        "url": "https://github.com/sponsors/ljharb"
+      }
+    },
+    "node_modules/range-parser": {
+      "version": "1.2.1",
+      "resolved": "https://registry.npmjs.org/range-parser/-/range-parser-1.2.1.tgz",
+      "integrity": "sha512-Hrgsx+orqoygnmhFbKaHE6c296J+HTAQXoxEF6gNupROmmGJRoyzfG3ccAveqCBrwr/2yxQ5BVd/GTl5agOwSg==",
+      "license": "MIT",
+      "engines": {
+        "node": ">= 0.6"
+      }
+    },
+    "node_modules/raw-body": {
+      "version": "2.5.3",
+      "resolved": "https://registry.npmjs.org/raw-body/-/raw-body-2.5.3.tgz",
+      "integrity": "sha512-s4VSOf6yN0rvbRZGxs8Om5CWj6seneMwK3oDb4lWDH0UPhWcxwOWw5+qk24bxq87szX1ydrwylIOp2uG1ojUpA==",
+      "license": "MIT",
+      "dependencies": {
+        "bytes": "~3.1.2",
+        "http-errors": "~2.0.1",
+        "iconv-lite": "~0.4.24",
+        "unpipe": "~1.0.0"
+      },
+      "engines": {
+        "node": ">= 0.8"
+      }
+    },
+    "node_modules/rc": {
+      "version": "1.2.8",
+      "resolved": "https://registry.npmjs.org/rc/-/rc-1.2.8.tgz",
+      "integrity": "sha512-y3bGgqKj3QBdxLbLkomlohkvsA8gdAiUQlSBJnBhfn+BPxg4bc62d8TcBW15wavDfgexCgccckhcZvywyQYPOw==",
+      "license": "(BSD-2-Clause OR MIT OR Apache-2.0)",
+      "dependencies": {
+        "deep-extend": "^0.6.0",
+        "ini": "~1.3.0",
+        "minimist": "^1.2.0",
+        "strip-json-comments": "~2.0.1"
+      },
+      "bin": {
+        "rc": "cli.js"
+      }
+    },
+    "node_modules/readable-stream": {
+      "version": "3.6.2",
+      "resolved": "https://registry.npmjs.org/readable-stream/-/readable-stream-3.6.2.tgz",
+      "integrity": "sha512-9u/sniCrY3D5WdsERHzHE4G2YCXqoG5FTHUiCC4SIbr6XcLZBY05ya9EKjYek9O5xOAwjGq+1JdGBAS7Q9ScoA==",
+      "license": "MIT",
+      "dependencies": {
+        "inherits": "^2.0.3",
+        "string_decoder": "^1.1.1",
+        "util-deprecate": "^1.0.1"
+      },
+      "engines": {
+        "node": ">= 6"
+      }
+    },
+    "node_modules/rimraf": {
+      "version": "3.0.2",
+      "resolved": "https://registry.npmjs.org/rimraf/-/rimraf-3.0.2.tgz",
+      "integrity": "sha512-JZkJMZkAGFFPP2YqXZXPbMlMBgsxzE8ILs4lMIX/2o0L9UBw9O/Y3o6wFw/i9YLapcUJWwqbi3kdxIPdC62TIA==",
+      "deprecated": "Rimraf versions prior to v4 are no longer supported",
+      "license": "ISC",
+      "dependencies": {
+        "glob": "^7.1.3"
+      },
+      "bin": {
+        "rimraf": "bin.js"
+      },
+      "funding": {
+        "url": "https://github.com/sponsors/isaacs"
+      }
+    },
+    "node_modules/safe-buffer": {
+      "version": "5.2.1",
+      "resolved": "https://registry.npmjs.org/safe-buffer/-/safe-buffer-5.2.1.tgz",
+      "integrity": "sha512-rp3So07KcdmmKbGvgaNxQSJr7bGVSVk5S9Eq1F+ppbRo70+YeaDxkw5Dd8NPN+GD6bjnYm2VuPuCXmpuYvmCXQ==",
+      "funding": [
+        {
+          "type": "github",
+          "url": "https://github.com/sponsors/feross"
+        },
+        {
+          "type": "patreon",
+          "url": "https://www.patreon.com/feross"
+        },
+        {
+          "type": "consulting",
+          "url": "https://feross.org/support"
+        }
+      ],
+      "license": "MIT"
+    },
+    "node_modules/safer-buffer": {
+      "version": "2.1.2",
+      "resolved": "https://registry.npmjs.org/safer-buffer/-/safer-buffer-2.1.2.tgz",
+      "integrity": "sha512-YZo3K82SD7Riyi0E1EQPojLz7kpepnSQI9IyPbHHg1XXXevb5dJI7tpyN2ADxGcQbHG7vcyRHk0cbwqcQriUtg==",
+      "license": "MIT"
+    },
+    "node_modules/semver": {
+      "version": "7.8.5",
+      "resolved": "https://registry.npmjs.org/semver/-/semver-7.8.5.tgz",
+      "integrity": "sha512-Y7/KDsb8LjooZpwaqGyulO6DQlksgCncchHGk+sZIY4SBvUocMBEFH5Ur1fI4dV+Jvl0w6cjvucaIi40puRioA==",
+      "license": "ISC",
+      "bin": {
+        "semver": "bin/semver.js"
+      },
+      "engines": {
+        "node": ">=10"
+      }
+    },
+    "node_modules/send": {
+      "version": "0.19.2",
+      "resolved": "https://registry.npmjs.org/send/-/send-0.19.2.tgz",
+      "integrity": "sha512-VMbMxbDeehAxpOtWJXlcUS5E8iXh6QmN+BkRX1GARS3wRaXEEgzCcB10gTQazO42tpNIya8xIyNx8fll1OFPrg==",
+      "license": "MIT",
+      "dependencies": {
+        "debug": "2.6.9",
+        "depd": "2.0.0",
+        "destroy": "1.2.0",
+        "encodeurl": "~2.0.0",
+        "escape-html": "~1.0.3",
+        "etag": "~1.8.1",
+        "fresh": "~0.5.2",
+        "http-errors": "~2.0.1",
+        "mime": "1.6.0",
+        "ms": "2.1.3",
+        "on-finished": "~2.4.1",
+        "range-parser": "~1.2.1",
+        "statuses": "~2.0.2"
+      },
+      "engines": {
+        "node": ">= 0.8.0"
+      }
+    },
+    "node_modules/send/node_modules/debug": {
+      "version": "2.6.9",
+      "resolved": "https://registry.npmjs.org/debug/-/debug-2.6.9.tgz",
+      "integrity": "sha512-bC7ElrdJaJnPbAP+1EotYvqZsb3ecl5wi6Bfi6BJTUcNowp6cvspg0jXznRTKDjm/E7AdgFBVeAPVMNcKGsHMA==",
+      "license": "MIT",
+      "dependencies": {
+        "ms": "2.0.0"
+      }
+    },
+    "node_modules/send/node_modules/debug/node_modules/ms": {
+      "version": "2.0.0",
+      "resolved": "https://registry.npmjs.org/ms/-/ms-2.0.0.tgz",
+      "integrity": "sha512-Tpp60P6IUJDTuOq/5Z8cdskzJujfwqfOTkrwIwj7IRISpnkJnT6SyJ4PCPnGMoFjC9ddhal5KVIYtAt97ix05A==",
+      "license": "MIT"
+    },
+    "node_modules/serve-static": {
+      "version": "1.16.3",
+      "resolved": "https://registry.npmjs.org/serve-static/-/serve-static-1.16.3.tgz",
+      "integrity": "sha512-x0RTqQel6g5SY7Lg6ZreMmsOzncHFU7nhnRWkKgWuMTu5NN0DR5oruckMqRvacAN9d5w6ARnRBXl9xhDCgfMeA==",
+      "license": "MIT",
+      "dependencies": {
+        "encodeurl": "~2.0.0",
+        "escape-html": "~1.0.3",
+        "parseurl": "~1.3.3",
+        "send": "~0.19.1"
+      },
+      "engines": {
+        "node": ">= 0.8.0"
+      }
+    },
+    "node_modules/set-blocking": {
+      "version": "2.0.0",
+      "resolved": "https://registry.npmjs.org/set-blocking/-/set-blocking-2.0.0.tgz",
+      "integrity": "sha512-KiKBS8AnWGEyLzofFfmvKwpdPzqiy16LvQfK3yv/fVH7Bj13/wl3JSR1J+rfgRE9q7xUJK4qvgS8raSOeLUehw==",
+      "license": "ISC"
+    },
+    "node_modules/setprototypeof": {
+      "version": "1.2.0",
+      "resolved": "https://registry.npmjs.org/setprototypeof/-/setprototypeof-1.2.0.tgz",
+      "integrity": "sha512-E5LDX7Wrp85Kil5bhZv46j8jOeboKq5JMmYM3gVGdGH8xFpPWXUMsNrlODCrkoxMEeNi/XZIwuRvY4XNwYMJpw==",
+      "license": "ISC"
+    },
+    "node_modules/side-channel": {
+      "version": "1.1.1",
+      "resolved": "https://registry.npmjs.org/side-channel/-/side-channel-1.1.1.tgz",
+      "integrity": "sha512-6x6dK6zJdpTzF4sQeNYxwtvBzf6Eg4GtlesS94HOvTudUeyK2WXAaIfmDgsyslYrRBeFIlsi54AYsFGUuhmvrQ==",
+      "license": "MIT",
+      "dependencies": {
+        "es-errors": "^1.3.0",
+        "object-inspect": "^1.13.4",
+        "side-channel-list": "^1.0.1",
+        "side-channel-map": "^1.0.1",
+        "side-channel-weakmap": "^1.0.2"
+      },
+      "engines": {
+        "node": ">= 0.4"
+      },
+      "funding": {
+        "url": "https://github.com/sponsors/ljharb"
+      }
+    },
+    "node_modules/side-channel-list": {
+      "version": "1.0.1",
+      "resolved": "https://registry.npmjs.org/side-channel-list/-/side-channel-list-1.0.1.tgz",
+      "integrity": "sha512-mjn/0bi/oUURjc5Xl7IaWi/OJJJumuoJFQJfDDyO46+hBWsfaVM65TBHq2eoZBhzl9EchxOijpkbRC8SVBQU0w==",
+      "license": "MIT",
+      "dependencies": {
+        "es-errors": "^1.3.0",
+        "object-inspect": "^1.13.4"
+      },
+      "engines": {
+        "node": ">= 0.4"
+      },
+      "funding": {
+        "url": "https://github.com/sponsors/ljharb"
+      }
+    },
+    "node_modules/side-channel-map": {
+      "version": "1.0.1",
+      "resolved": "https://registry.npmjs.org/side-channel-map/-/side-channel-map-1.0.1.tgz",
+      "integrity": "sha512-VCjCNfgMsby3tTdo02nbjtM/ewra6jPHmpThenkTYh8pG9ucZ/1P8So4u4FGBek/BjpOVsDCMoLA/iuBKIFXRA==",
+      "license": "MIT",
+      "dependencies": {
+        "call-bound": "^1.0.2",
+        "es-errors": "^1.3.0",
+        "get-intrinsic": "^1.2.5",
+        "object-inspect": "^1.13.3"
+      },
+      "engines": {
+        "node": ">= 0.4"
+      },
+      "funding": {
+        "url": "https://github.com/sponsors/ljharb"
+      }
+    },
+    "node_modules/side-channel-weakmap": {
+      "version": "1.0.2",
+      "resolved": "https://registry.npmjs.org/side-channel-weakmap/-/side-channel-weakmap-1.0.2.tgz",
+      "integrity": "sha512-WPS/HvHQTYnHisLo9McqBHOJk2FkHO/tlpvldyrnem4aeQp4hai3gythswg6p01oSoTl58rcpiFAjF2br2Ak2A==",
+      "license": "MIT",
+      "dependencies": {
+        "call-bound": "^1.0.2",
+        "es-errors": "^1.3.0",
+        "get-intrinsic": "^1.2.5",
+        "object-inspect": "^1.13.3",
+        "side-channel-map": "^1.0.1"
+      },
+      "engines": {
+        "node": ">= 0.4"
+      },
+      "funding": {
+        "url": "https://github.com/sponsors/ljharb"
+      }
+    },
+    "node_modules/signal-exit": {
+      "version": "3.0.7",
+      "resolved": "https://registry.npmjs.org/signal-exit/-/signal-exit-3.0.7.tgz",
+      "integrity": "sha512-wnD2ZE+l+SPC/uoS0vXeE9L1+0wuaMqKlfz9AMUo38JsyLSBWSFcHR1Rri62LZc12vLr1gb3jl7iwQhgwpAbGQ==",
+      "license": "ISC"
+    },
+    "node_modules/simple-concat": {
+      "version": "1.0.1",
+      "resolved": "https://registry.npmjs.org/simple-concat/-/simple-concat-1.0.1.tgz",
+      "integrity": "sha512-cSFtAPtRhljv69IK0hTVZQ+OfE9nePi/rtJmw5UjHeVyVroEqJXP1sFztKUy1qU+xvz3u/sfYJLa947b7nAN2Q==",
+      "funding": [
+        {
+          "type": "github",
+          "url": "https://github.com/sponsors/feross"
+        },
+        {
+          "type": "patreon",
+          "url": "https://www.patreon.com/feross"
+        },
+        {
+          "type": "consulting",
+          "url": "https://feross.org/support"
+        }
+      ],
+      "license": "MIT"
+    },
+    "node_modules/simple-get": {
+      "version": "4.0.1",
+      "resolved": "https://registry.npmjs.org/simple-get/-/simple-get-4.0.1.tgz",
+      "integrity": "sha512-brv7p5WgH0jmQJr1ZDDfKDOSeWWg+OVypG99A/5vYGPqJ6pxiaHLy8nxtFjBA7oMa01ebA9gfh1uMCFqOuXxvA==",
+      "funding": [
+        {
+          "type": "github",
+          "url": "https://github.com/sponsors/feross"
+        },
+        {
+          "type": "patreon",
+          "url": "https://www.patreon.com/feross"
+        },
+        {
+          "type": "consulting",
+          "url": "https://feross.org/support"
+        }
+      ],
+      "license": "MIT",
+      "dependencies": {
+        "decompress-response": "^6.0.0",
+        "once": "^1.3.1",
+        "simple-concat": "^1.0.0"
+      }
+    },
+    "node_modules/statuses": {
+      "version": "2.0.2",
+      "resolved": "https://registry.npmjs.org/statuses/-/statuses-2.0.2.tgz",
+      "integrity": "sha512-DvEy55V3DB7uknRo+4iOGT5fP1slR8wQohVdknigZPMpMstaKJQWhwiYBACJE3Ul2pTnATihhBYnRhZQHGBiRw==",
+      "license": "MIT",
+      "engines": {
+        "node": ">= 0.8"
+      }
+    },
+    "node_modules/string_decoder": {
+      "version": "1.3.0",
+      "resolved": "https://registry.npmjs.org/string_decoder/-/string_decoder-1.3.0.tgz",
+      "integrity": "sha512-hkRX8U1WjJFd8LsDJ2yQ/wWWxaopEsABU1XfkM8A+j0+85JAGppt16cr1Whg6KIbb4okU6Mql6BOj+uup/wKeA==",
+      "license": "MIT",
+      "dependencies": {
+        "safe-buffer": "~5.2.0"
+      }
+    },
+    "node_modules/string-width": {
+      "version": "4.2.3",
+      "resolved": "https://registry.npmjs.org/string-width/-/string-width-4.2.3.tgz",
+      "integrity": "sha512-wKyQRQpjJ0sIp62ErSZdGsjMJWsap5oRNihHhu6G7JVO/9jIB6UyevL+tXuOqrng8j/cxKTWyWUwvSTriiZz/g==",
+      "license": "MIT",
+      "dependencies": {
+        "emoji-regex": "^8.0.0",
+        "is-fullwidth-code-point": "^3.0.0",
+        "strip-ansi": "^6.0.1"
+      },
+      "engines": {
+        "node": ">=8"
+      }
+    },
+    "node_modules/strip-ansi": {
+      "version": "6.0.1",
+      "resolved": "https://registry.npmjs.org/strip-ansi/-/strip-ansi-6.0.1.tgz",
+      "integrity": "sha512-Y38VPSHcqkFrCpFnQ9vuSXmquuv5oXOKpGeT6aGrr3o3Gc9AlVa6JBfUSOCnbxGGZF+/0ooI7KrPuUSztUdU5A==",
+      "license": "MIT",
+      "dependencies": {
+        "ansi-regex": "^5.0.1"
+      },
+      "engines": {
+        "node": ">=8"
+      }
+    },
+    "node_modules/strip-json-comments": {
+      "version": "2.0.1",
+      "resolved": "https://registry.npmjs.org/strip-json-comments/-/strip-json-comments-2.0.1.tgz",
+      "integrity": "sha512-4gB8na07fecVVkOI6Rs4e7T6NOTki5EmL7TUduTs6bu3EdnSycntVJ4re8kgZA+wx9IueI2Y11bfbgwtzuE0KQ==",
+      "license": "MIT",
+      "engines": {
+        "node": ">=0.10.0"
+      }
+    },
+    "node_modules/tar": {
+      "version": "6.2.1",
+      "resolved": "https://registry.npmjs.org/tar/-/tar-6.2.1.tgz",
+      "integrity": "sha512-DZ4yORTwrbTj/7MZYq2w+/ZFdI6OZ/f9SFHR+71gIVUZhOQPHzVCLpvRnPgyaMpfWxxk/4ONva3GQSyNIKRv6A==",
+      "deprecated": "Old versions of tar are not supported, and contain widely publicized security vulnerabilities, which have been fixed in the current version. Please update. Support for old versions may be purchased (at exorbitant rates) by contacting i@izs.me",
+      "license": "ISC",
+      "dependencies": {
+        "chownr": "^2.0.0",
+        "fs-minipass": "^2.0.0",
+        "minipass": "^5.0.0",
+        "minizlib": "^2.1.1",
+        "mkdirp": "^1.0.3",
+        "yallist": "^4.0.0"
+      },
+      "engines": {
+        "node": ">=10"
+      }
+    },
+    "node_modules/tar-fs": {
+      "version": "2.1.5",
+      "resolved": "https://registry.npmjs.org/tar-fs/-/tar-fs-2.1.5.tgz",
+      "integrity": "sha512-OboTd8mmMhZDNPV+UjQcK9yKAatXu2aJ+r1w4im1Otd4M4fl2hwvdoXUxIYHFTHWK/3y3FarBP70v3vwmGlOxw==",
+      "license": "MIT",
+      "dependencies": {
+        "chownr": "^1.1.1",
+        "mkdirp-classic": "^0.5.2",
+        "pump": "^3.0.0",
+        "tar-stream": "^2.1.4"
+      }
+    },
+    "node_modules/tar-fs/node_modules/chownr": {
+      "version": "1.1.4",
+      "resolved": "https://registry.npmjs.org/chownr/-/chownr-1.1.4.tgz",
+      "integrity": "sha512-jJ0bqzaylmJtVnNgzTeSOs8DPavpbYgEr/b0YL8/2GO3xJEhInFmhKMUnEJQjZumK7KXGFhUy89PrsJWlakBVg==",
+      "license": "ISC"
+    },
+    "node_modules/tar-stream": {
+      "version": "2.2.0",
+      "resolved": "https://registry.npmjs.org/tar-stream/-/tar-stream-2.2.0.tgz",
+      "integrity": "sha512-ujeqbceABgwMZxEJnk2HDY2DlnUZ+9oEcb1KzTVfYHio0UE6dG71n60d8D2I4qNvleWrrXpmjpt7vZeF1LnMZQ==",
+      "license": "MIT",
+      "dependencies": {
+        "bl": "^4.0.3",
+        "end-of-stream": "^1.4.1",
+        "fs-constants": "^1.0.0",
+        "inherits": "^2.0.3",
+        "readable-stream": "^3.1.1"
+      },
+      "engines": {
+        "node": ">=6"
+      }
+    },
+    "node_modules/toidentifier": {
+      "version": "1.0.1",
+      "resolved": "https://registry.npmjs.org/toidentifier/-/toidentifier-1.0.1.tgz",
+      "integrity": "sha512-o5sSPKEkg/DIQNmH43V0/uerLrpzVedkUh8tGNvaeXpfpuwjKenlSox/2O/BTlZUtEe+JG7s5YhEz608PlAHRA==",
+      "license": "MIT",
+      "engines": {
+        "node": ">=0.6"
+      }
+    },
+    "node_modules/tr46": {
+      "version": "0.0.3",
+      "resolved": "https://registry.npmjs.org/tr46/-/tr46-0.0.3.tgz",
+      "integrity": "sha512-N3WMsuqV66lT30CrXNbEjx4GEwlow3v6rr4mCcv6prnfwhS01rkgyFdjPNBYd9br7LpXV1+Emh01fHnq2Gdgrw==",
+      "license": "MIT"
+    },
+    "node_modules/tsscmp": {
+      "version": "1.0.6",
+      "resolved": "https://registry.npmjs.org/tsscmp/-/tsscmp-1.0.6.tgz",
+      "integrity": "sha512-LxhtAkPDTkVCMQjt2h6eBVY28KCjikZqZfMcC15YBeNjkgUpdCfBu5HoiOTDu86v6smE8yOjyEktJ8hlbANHQA==",
+      "license": "MIT",
+      "engines": {
+        "node": ">=0.6.x"
+      }
+    },
+    "node_modules/tunnel-agent": {
+      "version": "0.6.0",
+      "resolved": "https://registry.npmjs.org/tunnel-agent/-/tunnel-agent-0.6.0.tgz",
+      "integrity": "sha512-McnNiV1l8RYeY8tBgEpuodCC1mLUdbSN+CYBL7kJsJNInOP8UjDDEwdk6Mw60vdLLrr5NHKZhMAOSrR2NZuQ+w==",
+      "license": "Apache-2.0",
+      "dependencies": {
+        "safe-buffer": "^5.0.1"
+      },
+      "engines": {
+        "node": "*"
+      }
+    },
+    "node_modules/type-is": {
+      "version": "1.6.18",
+      "resolved": "https://registry.npmjs.org/type-is/-/type-is-1.6.18.tgz",
+      "integrity": "sha512-TkRKr9sUTxEH8MdfuCSP7VizJyzRNMjj2J2do2Jr3Kym598JVdEksuzPQCnlFPW4ky9Q+iA+ma9BGm06XQBy8g==",
+      "license": "MIT",
+      "dependencies": {
+        "media-typer": "0.3.0",
+        "mime-types": "~2.1.24"
+      },
+      "engines": {
+        "node": ">= 0.6"
+      }
+    },
+    "node_modules/unpipe": {
+      "version": "1.0.0",
+      "resolved": "https://registry.npmjs.org/unpipe/-/unpipe-1.0.0.tgz",
+      "integrity": "sha512-pjy2bYhSsufwWlKwPc+l3cN7+wuJlK6uz0YdJEOlQDbl6jo/YlPi4mb8agUkVC8BF7V8NuzeyPNqRksA3hztKQ==",
+      "license": "MIT",
+      "engines": {
+        "node": ">= 0.8"
+      }
+    },
+    "node_modules/util-deprecate": {
+      "version": "1.0.2",
+      "resolved": "https://registry.npmjs.org/util-deprecate/-/util-deprecate-1.0.2.tgz",
+      "integrity": "sha512-EPD5q1uXyFxJpCrLnCc1nHnq3gOa6DZBocAIiI2TaSCA7VCJ1UJDMagCzIkXNsUYfD1daK//LTEQ8xiIbrHtcw==",
+      "license": "MIT"
+    },
+    "node_modules/utils-merge": {
+      "version": "1.0.1",
+      "resolved": "https://registry.npmjs.org/utils-merge/-/utils-merge-1.0.1.tgz",
+      "integrity": "sha512-pMZTvIkT1d+TFGvDOqodOclx0QWkkgi6Tdoa8gC8ffGAAqz9pzPTZWAybbsHHoED/ztMtkv/VoYTYyShUn81hA==",
+      "license": "MIT",
+      "engines": {
+        "node": ">= 0.4.0"
+      }
+    },
+    "node_modules/vary": {
+      "version": "1.1.2",
+      "resolved": "https://registry.npmjs.org/vary/-/vary-1.1.2.tgz",
+      "integrity": "sha512-BNGbWLfd0eUPabhkXUVm0j8uuvREyTh5ovRa/dyow/BqAbZJyC+5fU+IzQOzmAKzYqYRAISoRhdQr3eIZ/PXqg==",
+      "license": "MIT",
+      "engines": {
+        "node": ">= 0.8"
+      }
+    },
+    "node_modules/webidl-conversions": {
+      "version": "3.0.1",
+      "resolved": "https://registry.npmjs.org/webidl-conversions/-/webidl-conversions-3.0.1.tgz",
+      "integrity": "sha512-2JAn3z8AR6rjK8Sm8orRC0h/bcl/DqL7tRPdGZ4I1CjdF+EaMLmYxBHyXuKL849eucPFhvBoxMsflfOb8kxaeQ==",
+      "license": "BSD-2-Clause"
+    },
+    "node_modules/whatwg-url": {
+      "version": "5.0.0",
+      "resolved": "https://registry.npmjs.org/whatwg-url/-/whatwg-url-5.0.0.tgz",
+      "integrity": "sha512-saE57nupxk6v3HY35+jzBwYa0rKSy0XR8JSxZPwgLr7ys0IBzhGviA1/TUGJLmSVqs8pb9AnvICXEuOHLprYTw==",
+      "license": "MIT",
+      "dependencies": {
+        "tr46": "~0.0.3",
+        "webidl-conversions": "^3.0.0"
+      }
+    },
+    "node_modules/wide-align": {
+      "version": "1.1.5",
+      "resolved": "https://registry.npmjs.org/wide-align/-/wide-align-1.1.5.tgz",
+      "integrity": "sha512-eDMORYaPNZ4sQIuuYPDHdQvf4gyCF9rEEV/yPxGfwPkRodwEgiMUUXTx/dex+Me0wxx53S+NgUHaP7y3MGlDmg==",
+      "license": "ISC",
+      "dependencies": {
+        "string-width": "^1.0.2 || 2 || 3 || 4"
+      }
+    },
+    "node_modules/wrappy": {
+      "version": "1.0.2",
+      "resolved": "https://registry.npmjs.org/wrappy/-/wrappy-1.0.2.tgz",
+      "integrity": "sha512-l4Sp/DRseor9wL6EvV2+TuQn63dMkPjZ/sp9XkghTEbV9KlPS1xUsZ3u7/IQO4wxtcFB4bgpQPRcR3QCvezPcQ==",
+      "license": "ISC"
+    },
+    "node_modules/yallist": {
+      "version": "4.0.0",
+      "resolved": "https://registry.npmjs.org/yallist/-/yallist-4.0.0.tgz",
+      "integrity": "sha512-3wdGidZyq5PB084XLES5TpOSRA3wjXAlIWMhum2kRcv/41Sn2emQ0dycQW4uZXLejwKvg6EsvbdlVL+FYEct7A==",
+      "license": "ISC"
+    }
+  }
+}
+
+
+===== ARCHIVO: server/.env.example =====
+
+PORT=3000
+SESSION_SECRET=cambiar-por-un-secreto-largo-y-aleatorio
+CORS_ORIGIN=http://localhost:8765,https://3ertiempo.online,https://josedaminato.github.io
+NODE_ENV=development
+
+
+===== ARCHIVO: server/.gitignore =====
+
+node_modules/
+data/
+.env
+uploads/
+
+
+===== ARCHIVO: server/README.md =====
+
+# API 3er Tiempo
+
+Backend compartido: un solo mundo para todos los jugadores.
+
+## Desarrollo local
+
+```bash
+cd server
+npm install
+npm run dev
+```
+
+La API queda en **http://localhost:3000**
+
+En otra terminal, serví el frontend:
+
+```bash
+python -m http.server 8765
+```
+
+Abrí http://localhost:8765/index.html — `config.js` usa `apiBaseUrl: http://localhost:3000` en localhost.
+
+## Variables de entorno
+
+Copiá `.env.example` a `.env`:
+
+| Variable | Descripción |
+|----------|-------------|
+| `PORT` | Puerto (default 3000) |
+| `SESSION_SECRET` | Secreto largo para cookies de sesión |
+| `CORS_ORIGIN` | Orígenes permitidos separados por coma |
+| `NODE_ENV` | `production` activa cookie Secure |
+
+## Despliegue en Hostinger (api.3ertiempo.online)
+
+1. Subí la carpeta `server/` al hosting (Node.js o VPS).
+2. `npm install --production`
+3. Configurá `.env` con `SESSION_SECRET` y `CORS_ORIGIN=https://3ertiempo.online`
+4. Apuntá el subdominio `api.3ertiempo.online` al proceso Node.
+5. Activá HTTPS (obligatorio para cookies en producción).
+
+La base SQLite vive en `server/data/3ertiempo.db`. Hacé backup periódico.
+
+## Privacidad de votos
+
+- Los votos individuales (`match_votes`, `peer_ratings`) **nunca** se devuelven al jugador calificado.
+- Cada usuario solo ve **sus propios votos** vía `/v1/matches/:id/my-votes` y `/v1/players/:id/my-rating`.
+- Lo público son **promedios agregados** y el periódico.
+
+## Endpoints principales
+
+- `POST /v1/auth/register|login|logout`
+- `GET /v1/players`
+- `PUT /v1/players/:id/rating`
+- `GET /v1/convocation` · `PUT /v1/convocation`
+- `POST /v1/matches` · `PUT /v1/matches/:id/votes`
+- `GET /v1/matches/:id/newspaper`
+
+Ver `BACKEND_CONTRACT.md` en la raíz del repo.
+
+
+===== ARCHIVO: server/src/index.js =====
+
+import express from 'express';
+import cors from 'cors';
+import cookieSession from 'cookie-session';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import { registerAuthRoutes } from './routes/auth.js';
+import { registerPlayerRoutes, uploadsDir } from './routes/players.js';
+import { registerMatchRoutes, registerConvocationRoutes } from './routes/matches.js';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const PORT = Number(process.env.PORT) || 3000;
+const SESSION_SECRET = process.env.SESSION_SECRET || 'dev-secret-cambiar-en-produccion';
+const corsOrigins = (process.env.CORS_ORIGIN || 'http://localhost:8765,http://127.0.0.1:8765')
+  .split(',')
+  .map(s => s.trim())
+  .filter(Boolean);
+
+const app = express();
+
+app.set('trust proxy', 1);
+
+app.use(cors({
+  origin(origin, callback) {
+    if (!origin || corsOrigins.includes(origin)) return callback(null, true);
+    return callback(null, false);
+  },
+  credentials: true
+}));
+
+app.use(express.json({ limit: '6mb' }));
+
+app.use(cookieSession({
+  name: '3ertiempo_session',
+  secret: SESSION_SECRET,
+  httpOnly: true,
+  secure: process.env.NODE_ENV === 'production',
+  sameSite: 'lax',
+  maxAge: 30 * 24 * 60 * 60 * 1000
+}));
+
+app.use('/uploads', express.static(uploadsDir));
+
+app.get('/health', (req, res) => {
+  res.json({ ok: true, service: '3ertiempo-api' });
+});
+
+registerAuthRoutes(app);
+registerPlayerRoutes(app);
+registerMatchRoutes(app);
+registerConvocationRoutes(app);
+
+app.use((err, req, res, next) => {
+  console.error(err);
+  res.status(500).json({ ok: false, error: 'Error interno' });
+});
+
+app.listen(PORT, () => {
+  console.log(`3ertiempo API en http://localhost:${PORT}`);
+  console.log(`CORS: ${corsOrigins.join(', ')}`);
+});
+
+
+===== ARCHIVO: server/src/db.js =====
+
+import Database from 'better-sqlite3';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const dataDir = path.join(__dirname, '..', 'data');
+const dbPath = path.join(dataDir, '3ertiempo.db');
+
+if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
+
+const db = new Database(dbPath);
+db.pragma('journal_mode = WAL');
+db.pragma('foreign_keys = ON');
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS players (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE COLLATE NOCASE,
+    position_1 TEXT NOT NULL DEFAULT 'MED',
+    position_2 TEXT NOT NULL DEFAULT 'DEL',
+    plays_goalkeeper INTEGER NOT NULL DEFAULT 0,
+    age INTEGER NOT NULL DEFAULT 30,
+    height INTEGER NOT NULL DEFAULT 175,
+    preferred_foot TEXT NOT NULL DEFAULT 'Derecho',
+    photo_url TEXT NOT NULL DEFAULT '',
+    base_stats_json TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE IF NOT EXISTS users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    player_id INTEGER NOT NULL UNIQUE REFERENCES players(id) ON DELETE CASCADE,
+    username TEXT NOT NULL UNIQUE COLLATE NOCASE,
+    password_hash TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE IF NOT EXISTS peer_ratings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    rater_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    rated_player_id INTEGER NOT NULL REFERENCES players(id) ON DELETE CASCADE,
+    stats_json TEXT NOT NULL,
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(rater_user_id, rated_player_id)
+  );
+
+  CREATE TABLE IF NOT EXISTS matches (
+    id TEXT PRIMARY KEY,
+    format INTEGER NOT NULL,
+    scheduled_for TEXT,
+    played_at TEXT,
+    status TEXT NOT NULL DEFAULT 'voting',
+    created_by INTEGER REFERENCES users(id),
+    team_claro_json TEXT NOT NULL DEFAULT '[]',
+    team_oscuro_json TEXT NOT NULL DEFAULT '[]',
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE IF NOT EXISTS match_votes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    match_id TEXT NOT NULL REFERENCES matches(id) ON DELETE CASCADE,
+    rater_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    rated_player_id INTEGER NOT NULL REFERENCES players(id) ON DELETE CASCADE,
+    score INTEGER NOT NULL CHECK(score BETWEEN 1 AND 5),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(match_id, rater_user_id, rated_player_id)
+  );
+
+  CREATE TABLE IF NOT EXISTS convocation (
+    player_id INTEGER PRIMARY KEY REFERENCES players(id) ON DELETE CASCADE,
+    selected_by INTEGER REFERENCES users(id),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+`);
+
+const STAT_FIELDS = [
+  'vel_fis', 'resistencia', 'fuerza',
+  'regate', 'pase_corto', 'pase_largo', 'posicionamiento', 'remate',
+  'marca', 'arquero'
+];
+
+const PEER_CARD_KEYS = ['velocidad', 'resistencia', 'fuerza', 'tiro', 'pase', 'regate', 'defensa', 'arquero'];
+
+function defaultBaseStats() {
+  const stats = {};
+  STAT_FIELDS.forEach(f => { stats[f] = f === 'arquero' ? 1 : 3; });
+  return stats;
+}
+
+function normalizeName(value) {
+  return String(value || '').trim().toLocaleLowerCase('es');
+}
+
+function clamp(n, min = 1, max = 5) {
+  return Math.max(min, Math.min(max, Math.round(Number(n) || min)));
+}
+
+function rowToPlayer(row, peerMeta = null) {
+  const base = JSON.parse(row.base_stats_json || '{}');
+  const player = {
+    nombre: row.name,
+    posicion_1: row.position_1,
+    posicion_2: row.position_2,
+    juega_arco: Boolean(row.plays_goalkeeper),
+    edad: row.age,
+    altura: row.height,
+    pie_habil: row.preferred_foot,
+    foto_url: row.photo_url || '',
+    ...base
+  };
+  if (peerMeta) {
+    player.rating_count = peerMeta.count;
+    if (peerMeta.stats) player.peer_averages = peerMeta.stats;
+  }
+  return player;
+}
+
+function playerPayloadToBaseStats(body) {
+  const stats = defaultBaseStats();
+  STAT_FIELDS.forEach(f => {
+    if (body[f] != null && body[f] !== '') stats[f] = clamp(body[f], f === 'arquero' ? 1 : 1, 5);
+  });
+  return stats;
+}
+
+function getPlayerByName(name) {
+  return db.prepare('SELECT * FROM players WHERE name = ? COLLATE NOCASE').get(String(name || '').trim());
+}
+
+function getPlayerById(id) {
+  return db.prepare('SELECT * FROM players WHERE id = ?').get(id);
+}
+
+function getUserByUsername(username) {
+  return db.prepare(`
+    SELECT u.*, p.name AS player_name
+    FROM users u
+    JOIN players p ON p.id = u.player_id
+    WHERE u.username = ? COLLATE NOCASE
+  `).get(String(username || '').trim());
+}
+
+function getUserById(id) {
+  return db.prepare(`
+    SELECT u.*, p.name AS player_name
+    FROM users u
+    JOIN players p ON p.id = u.player_id
+    WHERE u.id = ?
+  `).get(id);
+}
+
+function computePeerAverages(playerId) {
+  const rows = db.prepare(`
+    SELECT stats_json FROM peer_ratings WHERE rated_player_id = ?
+  `).all(playerId);
+
+  if (!rows.length) return { count: 0, stats: null };
+
+  const sums = {};
+  PEER_CARD_KEYS.forEach(k => { sums[k] = 0; });
+  let arqueroCount = 0;
+
+  rows.forEach(row => {
+    const stats = JSON.parse(row.stats_json);
+    PEER_CARD_KEYS.forEach(key => {
+      if (stats[key] != null) {
+        sums[key] += clamp(stats[key]);
+        if (key === 'arquero') arqueroCount += 1;
+      }
+    });
+  });
+
+  const stats = {};
+  PEER_CARD_KEYS.forEach(key => {
+    if (key === 'arquero') {
+      if (arqueroCount) stats.arquero = sums.arquero / arqueroCount;
+    } else {
+      stats[key] = sums[key] / rows.length;
+    }
+  });
+
+  return { count: rows.length, stats };
+}
+
+function seedPlayersIfEmpty() {
+  const count = db.prepare('SELECT COUNT(*) AS c FROM players').get().c;
+  if (count > 0) return;
+
+  const names = [
+    'Marcelo', 'Maxi', 'Turco', 'Gato', 'Mariano', 'Charly', 'Gonza', 'Ariel',
+    'Claudio', 'Cacho', 'Jorge', 'Jose', 'Claudio M', 'Seba', 'Marcos',
+    'Juampi', 'Chifi', 'Matías', 'Pablo', 'Fer', 'Tasla', 'Franco', 'Javi'
+  ];
+
+  const insert = db.prepare(`
+    INSERT INTO players (name, position_1, position_2, plays_goalkeeper, base_stats_json)
+    VALUES (?, 'MED', 'DEL', 0, ?)
+  `);
+
+  const tx = db.transaction(() => {
+    names.forEach(name => insert.run(name, JSON.stringify(defaultBaseStats())));
+  });
+  tx();
+}
+
+seedPlayersIfEmpty();
+
+export {
+  db,
+  STAT_FIELDS,
+  PEER_CARD_KEYS,
+  defaultBaseStats,
+  normalizeName,
+  clamp,
+  rowToPlayer,
+  playerPayloadToBaseStats,
+  getPlayerByName,
+  getPlayerById,
+  getUserByUsername,
+  getUserById,
+  computePeerAverages
+};
+
+
+===== ARCHIVO: server/src/middleware.js =====
+
+export function requireAuth(req, res, next) {
+  if (!req.session?.userId) {
+    return res.status(401).json({ ok: false, error: 'No autenticado' });
+  }
+  next();
+}
+
+export function sessionUser(req) {
+  return req.session?.user || null;
+}
+
+
+===== ARCHIVO: server/src/newspaper.js =====
+
+const MIN_VOTES_FOR_NEWSPAPER = 6;
+
+function hash(text) {
+  return Array.from(String(text)).reduce((acc, char) => ((acc << 5) - acc + char.charCodeAt(0)) | 0, 0);
+}
+
+function choose(items, seed) {
+  return items[Math.abs(hash(seed)) % items.length];
+}
+
+function verdictFor(result, matchId) {
+  const name = result.playerName;
+  const score = result.average;
+  const seed = `${matchId}:${name}:${score.toFixed(2)}`;
+
+  if (score < 1.75) {
+    return choose([
+      `Paupérrimo partido de ${name}. Su rendimiento fue atroz y la tribuna no le perdonó una noche para el olvido.`,
+      `${name} quedó en deuda de principio a fin. Impreciso, desconectado y abucheado por una hinchada que esperaba mucho más.`,
+      `Noche negra para ${name}: nunca encontró el partido y terminó señalado por un desempeño realmente flojo.`
+    ], seed);
+  }
+  if (score < 2.75) {
+    return choose([
+      `${name} tuvo una actuación muy floja. Le costó entrar en juego y acumuló errores que condicionaron a su equipo.`,
+      `Partido para olvidar de ${name}. Mostró voluntad, pero su rendimiento estuvo muy por debajo de lo esperado.`,
+      `${name} no hizo pie y terminó reprobado. Necesitará revancha para borrar una presentación decepcionante.`
+    ], seed);
+  }
+  if (score < 3.75) {
+    return choose([
+      `${name} cumplió. Sin lujos ni grandes errores, sostuvo un rendimiento correcto durante el encuentro.`,
+      `Labor sobria de ${name}: hizo lo necesario, mantuvo el orden y aprobó sin sobresalir.`,
+      `${name} tuvo una noche pareja. Aportó equilibrio y respondió cuando el partido se lo pidió.`
+    ], seed);
+  }
+  if (score < 4.5) {
+    return choose([
+      `Muy buen partido de ${name}. Fue confiable, participativo y una pieza importante para su equipo.`,
+      `${name} se destacó con una actuación convincente. Mostró jerarquía y apareció en momentos decisivos.`,
+      `Gran noche de ${name}: intensidad, criterio y un rendimiento que levantó a sus compañeros.`
+    ], seed);
+  }
+  return choose([
+    `${name} fue la gran figura. Una actuación extraordinaria, ovacionada por todos los presentes.`,
+    `Exhibición de ${name}: dominó el partido y firmó una noche memorable, digna de todos los elogios.`,
+    `${name} brilló con luz propia. Imparable y decisivo, se llevó una ovación unánime.`
+  ], seed);
+}
+
+export function buildNewspaper(match, voteCount, results) {
+  if (voteCount < MIN_VOTES_FOR_NEWSPAPER || !results.length) return null;
+
+  const top = results[0];
+  const bottom = results[results.length - 1];
+  const globalAverage = results.reduce((sum, item) => sum + item.average, 0) / results.length;
+  const totalVotes = results.reduce((sum, item) => sum + item.votes, 0);
+
+  return {
+    kicker: `Edición ${new Date(match.played_at || match.created_at).toLocaleDateString('es-AR')}`,
+    headline: top.average >= 4.5
+      ? `${top.playerName}, dueño absoluto del 3er tiempo`
+      : `${top.playerName} se quedó con la noche`,
+    deck: `${totalVotes} votos marcaron el pulso de un partido con promedio general de ${globalAverage.toFixed(1)}.`,
+    figure: top,
+    lowest: bottom,
+    results,
+    articles: results.map(result => ({
+      ...result,
+      arrow: result.average < 2.5 ? 'down' : result.average < 3.5 ? 'flat' : 'up',
+      text: verdictFor(result, match.id)
+    }))
+  };
+}
+
+export { MIN_VOTES_FOR_NEWSPAPER };
+
+
+===== ARCHIVO: server/src/routes/auth.js =====
+
+import bcrypt from 'bcrypt';
+import {
+  db,
+  getUserByUsername,
+  getUserById,
+  getPlayerByName
+} from '../db.js';
+
+const PIN_REGEX = /^\d{6}$/;
+
+function sessionPayload(userRow) {
+  return { username: userRow.username, playerId: userRow.player_id };
+}
+
+export function registerAuthRoutes(app) {
+  app.post('/v1/auth/status', (req, res) => {
+    const username = String(req.body?.username || '').trim();
+    if (!username) return res.status(400).json({ ok: false, error: 'Falta username' });
+    const user = getUserByUsername(username);
+    res.json({ ok: true, registered: Boolean(user) });
+  });
+
+  app.post('/v1/auth/register', async (req, res) => {
+    try {
+      const username = String(req.body?.username || '').trim();
+      const password = String(req.body?.password || '').trim();
+      if (!username) return res.status(400).json({ ok: false, error: 'Elegí tu jugador' });
+      if (!PIN_REGEX.test(password)) {
+        return res.status(400).json({ ok: false, error: 'La contraseña debe tener 6 números' });
+      }
+
+      const player = getPlayerByName(username);
+      if (!player) return res.status(404).json({ ok: false, error: 'Jugador no encontrado' });
+
+      const existing = getUserByUsername(username);
+      if (existing) {
+        return res.status(409).json({ ok: false, error: 'Este jugador ya tiene contraseña. Usá Ingresar.' });
+      }
+
+      const passwordHash = await bcrypt.hash(password, 12);
+      const result = db.prepare(`
+        INSERT INTO users (player_id, username, password_hash)
+        VALUES (?, ?, ?)
+      `).run(player.id, username, passwordHash);
+
+      const user = getUserById(result.lastInsertRowid);
+      req.session.userId = user.id;
+      req.session.user = sessionPayload(user);
+      res.json({ ok: true, user: { username: user.username } });
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  app.post('/v1/auth/login', async (req, res) => {
+    try {
+      const username = String(req.body?.username || '').trim();
+      const password = String(req.body?.password || '').trim();
+      if (!username) return res.status(400).json({ ok: false, error: 'Elegí tu jugador' });
+      if (!PIN_REGEX.test(password)) {
+        return res.status(400).json({ ok: false, error: 'La contraseña debe tener 6 números' });
+      }
+
+      const user = getUserByUsername(username);
+      if (!user) {
+        return res.status(401).json({ ok: false, error: 'Primera vez: creá tu contraseña de 6 números' });
+      }
+
+      const valid = await bcrypt.compare(password, user.password_hash);
+      if (!valid) return res.status(401).json({ ok: false, error: 'Contraseña incorrecta' });
+
+      req.session.userId = user.id;
+      req.session.user = sessionPayload(user);
+      res.json({ ok: true, user: { username: user.username } });
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  app.post('/v1/auth/logout', (req, res) => {
+    req.session = null;
+    res.json({ ok: true });
+  });
+
+  app.get('/v1/auth/me', (req, res) => {
+    if (!req.session?.userId) return res.json({ ok: true, user: null });
+    const user = getUserById(req.session.userId);
+    if (!user) {
+      req.session = null;
+      return res.json({ ok: true, user: null });
+    }
+    res.json({ ok: true, user: { username: user.username } });
+  });
+}
+
+
+===== ARCHIVO: server/src/routes/players.js =====
+
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import {
+  db,
+  rowToPlayer,
+  playerPayloadToBaseStats,
+  getPlayerByName,
+  getPlayerById,
+  getUserById,
+  computePeerAverages,
+  clamp
+} from '../db.js';
+import { requireAuth } from '../middleware.js';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const uploadsDir = path.join(__dirname, '..', '..', 'uploads');
+
+if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
+
+function canEditPlayer(user, playerRow) {
+  return user && user.player_id === playerRow.id;
+}
+
+function listAllPlayers() {
+  const rows = db.prepare('SELECT * FROM players ORDER BY name COLLATE NOCASE').all();
+  return rows.map(row => rowToPlayer(row, computePeerAverages(row.id)));
+}
+
+export function registerPlayerRoutes(app) {
+  app.get('/v1/players', (req, res) => {
+    const players = listAllPlayers();
+    res.json({
+      ok: true,
+      players,
+      message: `${players.length} jugadores sincronizados`
+    });
+  });
+
+  app.post('/v1/players', requireAuth, (req, res) => {
+    try {
+      const body = req.body || {};
+      const name = String(body.nombre || '').trim();
+      if (!name) return res.status(400).json({ ok: false, error: 'Falta nombre' });
+      if (getPlayerByName(name)) return res.status(409).json({ ok: false, error: 'Ya existe un jugador con ese nombre' });
+
+      const baseStats = playerPayloadToBaseStats(body);
+      db.prepare(`
+        INSERT INTO players (name, position_1, position_2, plays_goalkeeper, age, height, preferred_foot, photo_url, base_stats_json)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        name,
+        body.posicion_1 || 'MED',
+        body.posicion_2 || 'DEL',
+        body.juega_arco ? 1 : 0,
+        Number(body.edad) || 30,
+        Number(body.altura) || 175,
+        body.pie_habil || 'Derecho',
+        body.foto_url || '',
+        JSON.stringify(baseStats)
+      );
+
+      res.json({ ok: true });
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  app.put('/v1/players/:id', requireAuth, (req, res) => {
+    try {
+      const user = getUserById(req.session.userId);
+      const player = getPlayerByName(decodeURIComponent(req.params.id));
+      if (!player) return res.status(404).json({ ok: false, error: 'Jugador no encontrado' });
+      if (!canEditPlayer(user, player)) {
+        return res.status(403).json({ ok: false, error: 'Solo podés editar tu propio perfil' });
+      }
+
+      const body = req.body || {};
+      const baseStats = playerPayloadToBaseStats({ ...JSON.parse(player.base_stats_json), ...body });
+      db.prepare(`
+        UPDATE players SET
+          position_1 = ?, position_2 = ?, plays_goalkeeper = ?,
+          age = ?, height = ?, preferred_foot = ?, photo_url = ?,
+          base_stats_json = ?, updated_at = datetime('now')
+        WHERE id = ?
+      `).run(
+        body.posicion_1 || player.position_1,
+        body.posicion_2 || player.position_2,
+        body.juega_arco ? 1 : 0,
+        Number(body.edad) || player.age,
+        Number(body.altura) || player.height,
+        body.pie_habil || player.preferred_foot,
+        body.foto_url != null ? body.foto_url : player.photo_url,
+        JSON.stringify(baseStats),
+        player.id
+      );
+
+      res.json({ ok: true });
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  app.post('/v1/players/:id/photo', requireAuth, (req, res) => {
+    try {
+      const user = getUserById(req.session.userId);
+      const player = getPlayerByName(decodeURIComponent(req.params.id));
+      if (!player) return res.status(404).json({ ok: false, error: 'Jugador no encontrado' });
+      if (!canEditPlayer(user, player)) {
+        return res.status(403).json({ ok: false, error: 'Solo podés subir tu propia foto' });
+      }
+
+      const { imageBase64, mimeType } = req.body || {};
+      if (!imageBase64) return res.status(400).json({ ok: false, error: 'Falta imagen' });
+
+      const ext = mimeType === 'image/png' ? 'png' : 'jpg';
+      const filename = `${player.id}.${ext}`;
+      fs.writeFileSync(path.join(uploadsDir, filename), Buffer.from(imageBase64, 'base64'));
+      const fotoUrl = `/uploads/${filename}`;
+
+      db.prepare('UPDATE players SET photo_url = ?, updated_at = datetime(\'now\') WHERE id = ?')
+        .run(fotoUrl, player.id);
+
+      res.json({ ok: true, foto_url: fotoUrl });
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  app.put('/v1/players/:id/rating', requireAuth, (req, res) => {
+    try {
+      const user = getUserById(req.session.userId);
+      const rated = getPlayerByName(decodeURIComponent(req.params.id));
+      if (!rated) return res.status(404).json({ ok: false, error: 'Jugador no encontrado' });
+      if (user.player_id === rated.id) {
+        return res.status(403).json({ ok: false, error: 'No podés calificarte a vos mismo' });
+      }
+
+      const stats = req.body?.stats || req.body || {};
+      const normalized = {};
+      ['velocidad', 'resistencia', 'fuerza', 'tiro', 'pase', 'regate', 'defensa', 'arquero'].forEach(key => {
+        if (stats[key] != null) {
+          normalized[key] = clamp(stats[key], key === 'arquero' ? 1 : 1, 5);
+        }
+      });
+
+      db.prepare(`
+        INSERT INTO peer_ratings (rater_user_id, rated_player_id, stats_json, updated_at)
+        VALUES (?, ?, ?, datetime('now'))
+        ON CONFLICT(rater_user_id, rated_player_id) DO UPDATE SET
+          stats_json = excluded.stats_json,
+          updated_at = datetime('now')
+      `).run(user.id, rated.id, JSON.stringify(normalized));
+
+      res.json({ ok: true, peer_averages: computePeerAverages(rated.id) });
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  app.get('/v1/players/:id/my-rating', requireAuth, (req, res) => {
+    const user = getUserById(req.session.userId);
+    const rated = getPlayerByName(decodeURIComponent(req.params.id));
+    if (!rated) return res.status(404).json({ ok: false, error: 'Jugador no encontrado' });
+
+    const row = db.prepare(`
+      SELECT stats_json FROM peer_ratings
+      WHERE rater_user_id = ? AND rated_player_id = ?
+    `).get(user.id, rated.id);
+
+    res.json({
+      ok: true,
+      stats: row ? JSON.parse(row.stats_json) : null
+    });
+  });
+}
+
+export { uploadsDir };
+
+
+===== ARCHIVO: server/src/routes/matches.js =====
+
+import {
+  db,
+  getPlayerByName,
+  getPlayerById,
+  getUserById,
+  normalizeName,
+  clamp
+} from '../db.js';
+import { buildNewspaper, MIN_VOTES_FOR_NEWSPAPER } from '../newspaper.js';
+import { requireAuth } from '../middleware.js';
+
+function rowToMatch(row) {
+  return {
+    id: row.id,
+    date: row.played_at || row.created_at,
+    format: row.format,
+    teamClaro: JSON.parse(row.team_claro_json || '[]'),
+    teamOscuro: JSON.parse(row.team_oscuro_json || '[]'),
+    status: row.status
+  };
+}
+
+function teamsMatch(aClaro, aOscuro, bClaro, bOscuro) {
+  const sortNorm = arr => [...arr].map(normalizeName).sort();
+  return JSON.stringify(sortNorm(aClaro)) === JSON.stringify(sortNorm(bClaro)) &&
+    JSON.stringify(sortNorm(aOscuro)) === JSON.stringify(sortNorm(bOscuro));
+}
+
+function getMatchVoteCount(matchId) {
+  const row = db.prepare(`
+    SELECT COUNT(DISTINCT rater_user_id) AS c FROM match_votes WHERE match_id = ?
+  `).get(matchId);
+  return row?.c || 0;
+}
+
+function getMatchResults(matchId) {
+  const rows = db.prepare(`
+    SELECT p.name AS player_name, AVG(mv.score) AS average, COUNT(*) AS votes
+    FROM match_votes mv
+    JOIN players p ON p.id = mv.rated_player_id
+    WHERE mv.match_id = ?
+    GROUP BY mv.rated_player_id
+    ORDER BY average DESC
+  `).all(matchId);
+
+  return rows.map(r => ({
+    playerName: r.player_name,
+    average: r.average,
+    votes: r.votes
+  }));
+}
+
+export function registerMatchRoutes(app) {
+  app.get('/v1/matches', (req, res) => {
+    const rows = db.prepare(`
+      SELECT * FROM matches ORDER BY created_at DESC LIMIT 30
+    `).all();
+    res.json({ ok: true, matches: rows.map(rowToMatch) });
+  });
+
+  app.get('/v1/matches/upcoming', (req, res) => {
+    const row = db.prepare(`
+      SELECT * FROM matches WHERE status = 'open' ORDER BY created_at DESC LIMIT 1
+    `).get();
+    res.json({ ok: true, match: row ? rowToMatch(row) : null });
+  });
+
+  app.get('/v1/matches/:id', (req, res) => {
+    const row = db.prepare('SELECT * FROM matches WHERE id = ?').get(req.params.id);
+    if (!row) return res.status(404).json({ ok: false, error: 'Partido no encontrado' });
+    res.json({ ok: true, match: rowToMatch(row) });
+  });
+
+  app.post('/v1/matches', requireAuth, (req, res) => {
+    try {
+      const user = getUserById(req.session.userId);
+      const { format, teamClaro, teamOscuro, findOpen } = req.body || {};
+      const claro = (teamClaro || []).map(p => (typeof p === 'string' ? p : p.nombre));
+      const oscuro = (teamOscuro || []).map(p => (typeof p === 'string' ? p : p.nombre));
+
+      if (findOpen) {
+        const existing = db.prepare(`
+          SELECT * FROM matches WHERE format = ? AND status = 'voting'
+          ORDER BY created_at DESC
+        `).all(format);
+
+        const found = existing.find(m => {
+          const mClaro = JSON.parse(m.team_claro_json);
+          const mOscuro = JSON.parse(m.team_oscuro_json);
+          return teamsMatch(claro, oscuro, mClaro, mOscuro);
+        });
+
+        if (found) {
+          return res.json({ ok: true, match: rowToMatch(found), reused: true });
+        }
+      }
+
+      const id = `match_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+      db.prepare(`
+        INSERT INTO matches (id, format, played_at, status, created_by, team_claro_json, team_oscuro_json)
+        VALUES (?, ?, datetime('now'), 'voting', ?, ?, ?)
+      `).run(id, format, user.id, JSON.stringify(claro), JSON.stringify(oscuro));
+
+      const row = db.prepare('SELECT * FROM matches WHERE id = ?').get(id);
+      res.json({ ok: true, match: rowToMatch(row), reused: false });
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  app.put('/v1/matches/:id/votes', requireAuth, (req, res) => {
+    try {
+      const user = getUserById(req.session.userId);
+      const match = db.prepare('SELECT * FROM matches WHERE id = ?').get(req.params.id);
+      if (!match) return res.status(404).json({ ok: false, error: 'Partido no encontrado' });
+
+      const votes = req.body?.votes || [];
+      const upsert = db.prepare(`
+        INSERT INTO match_votes (match_id, rater_user_id, rated_player_id, score, updated_at)
+        VALUES (?, ?, ?, ?, datetime('now'))
+        ON CONFLICT(match_id, rater_user_id, rated_player_id) DO UPDATE SET
+          score = excluded.score,
+          updated_at = datetime('now')
+      `);
+
+      const tx = db.transaction(() => {
+        votes.forEach(vote => {
+          const rated = getPlayerByName(vote.playerName || vote.player);
+          if (!rated) return;
+          if (rated.id === user.player_id) {
+            throw new Error('No podés votarte a vos mismo');
+          }
+          upsert.run(match.id, user.id, rated.id, clamp(vote.score));
+        });
+      });
+      tx();
+
+      const voteCount = getMatchVoteCount(match.id);
+      res.json({
+        ok: true,
+        voteCount,
+        minVotes: MIN_VOTES_FOR_NEWSPAPER,
+        newspaperReady: voteCount >= MIN_VOTES_FOR_NEWSPAPER
+      });
+    } catch (err) {
+      res.status(400).json({ ok: false, error: err.message });
+    }
+  });
+
+  /** Solo los votos del usuario autenticado — privacidad */
+  app.get('/v1/matches/:id/my-votes', requireAuth, (req, res) => {
+    const user = getUserById(req.session.userId);
+    const rows = db.prepare(`
+      SELECT p.name AS player_name, mv.score
+      FROM match_votes mv
+      JOIN players p ON p.id = mv.rated_player_id
+      WHERE mv.match_id = ? AND mv.rater_user_id = ?
+    `).all(req.params.id, user.id);
+
+    const votes = {};
+    rows.forEach(r => {
+      votes[normalizeName(r.player_name)] = {
+        playerName: r.player_name,
+        score: r.score
+      };
+    });
+
+    res.json({ ok: true, votes });
+  });
+
+  /** Resultados agregados — sin identidad de votantes */
+  app.get('/v1/matches/:id/results', (req, res) => {
+    const match = db.prepare('SELECT * FROM matches WHERE id = ?').get(req.params.id);
+    if (!match) return res.status(404).json({ ok: false, error: 'Partido no encontrado' });
+
+    res.json({
+      ok: true,
+      voteCount: getMatchVoteCount(match.id),
+      minVotes: MIN_VOTES_FOR_NEWSPAPER,
+      results: getMatchResults(match.id)
+    });
+  });
+
+  app.get('/v1/matches/:id/newspaper', (req, res) => {
+    const match = db.prepare('SELECT * FROM matches WHERE id = ?').get(req.params.id);
+    if (!match) return res.status(404).json({ ok: false, error: 'Partido no encontrado' });
+
+    const voteCount = getMatchVoteCount(match.id);
+    const results = getMatchResults(match.id);
+    const edition = buildNewspaper(rowToMatch(match), voteCount, results);
+
+    res.json({
+      ok: true,
+      voteCount,
+      minVotes: MIN_VOTES_FOR_NEWSPAPER,
+      newspaper: edition
+    });
+  });
+}
+
+export function registerConvocationRoutes(app) {
+  app.get('/v1/convocation', (req, res) => {
+    const rows = db.prepare(`
+      SELECT p.name FROM convocation c
+      JOIN players p ON p.id = c.player_id
+      ORDER BY p.name COLLATE NOCASE
+    `).all();
+    res.json({
+      ok: true,
+      players: rows.map(r => r.name),
+      keys: rows.map(r => normalizeName(r.name))
+    });
+  });
+
+  app.put('/v1/convocation', requireAuth, (req, res) => {
+    try {
+      const user = getUserById(req.session.userId);
+      const names = Array.isArray(req.body?.players) ? req.body.players : [];
+
+      db.prepare('DELETE FROM convocation').run();
+      const insert = db.prepare(`
+        INSERT INTO convocation (player_id, selected_by, updated_at)
+        VALUES (?, ?, datetime('now'))
+      `);
+
+      const tx = db.transaction(() => {
+        names.forEach(name => {
+          const player = getPlayerByName(name);
+          if (player) insert.run(player.id, user.id);
+        });
+      });
+      tx();
+
+      res.json({ ok: true, count: names.length });
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+}
 
 

@@ -2,19 +2,23 @@
  * Configuración de 3er tiempo
  *
  * provider:
- *   'google' — Google Sheets + Apps Script (temporal, hasta tener backend)
- *   'api'    — Backend propio en api.3ertiempo.online (futuro)
- *   'local'  — Solo este dispositivo (desarrollo / pruebas)
+ *   'api'    — Backend compartido (producción / mundo común)
+ *   'google' — Google Sheets + Apps Script (legacy)
+ *   'local'  — Solo este dispositivo (desarrollo sin servidor)
  */
+const IS_LOCAL_DEV = typeof window !== 'undefined' &&
+  (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+
 const APP_CONFIG = {
-  provider: 'google',
+  provider: 'api',
 
   googleScriptUrl: 'https://script.google.com/macros/s/TU_ID_AQUI/exec',
 
-  /** Base URL del backend futuro (sin barra final) */
-  apiBaseUrl: 'https://api.3ertiempo.online',
+  /** Backend compartido — todos ven el mismo mundo */
+  apiBaseUrl: IS_LOCAL_DEV
+    ? 'http://localhost:3000'
+    : 'https://api.3ertiempo.online',
 
-  /** Nombres iniciales si no hay datos remotos ni guardados localmente */
   defaultPlayerNames: [
     'Marcelo', 'Maxi', 'Turco', 'Gato', 'Mariano', 'Charly', 'Gonza', 'Ariel',
     'Claudio', 'Cacho', 'Jorge', 'Jose', 'Claudio M', 'Seba', 'Marcos',

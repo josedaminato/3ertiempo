@@ -42,11 +42,21 @@ Abrí http://localhost:8765/index.html
 
 ## Desarrollo local
 
+**Frontend:**
 ```bash
 python -m http.server 8765
 ```
 
-Abrí http://localhost:8765/index.html
+**Backend compartido (Fase 2 — recomendado):**
+```bash
+cd server
+npm install
+npm run dev
+```
+
+Abrí http://localhost:8765/index.html — en localhost el frontend usa la API en `http://localhost:3000`.
+
+Ver `server/README.md` para despliegue en `api.3ertiempo.online`.
 
 ## Archivos
 
@@ -67,7 +77,8 @@ separados, sin cambiar comportamiento ni look de la app.
 | `teams.js` | Balanceo de equipos, formaciones, radar |
 | `ui.js` | Login, grid de jugadores, modales de edición/valoración, fotos |
 | `app.js` | Estado global, carga de datos, registro de partido/votación, arranque |
-| `Code.gs` | Backend Google Sheets / Apps Script |
+| `server/` | API Node.js + SQLite (mundo compartido, auth, votos privados) |
+| `Code.gs` | Backend Google Sheets / Apps Script (legacy) |
 | `jugadores.csv` | Plantilla inicial |
 
 Cada `<script src>` en `index.html` sigue este orden de carga porque
@@ -78,6 +89,12 @@ son scripts clásicos (no ES modules) que comparten el scope global.
 - **Bug del periódico:** contaba votos totales en vez de votantes únicos. Ahora `RatingsService.getMatchVoteCount` cuenta personas que votaron.
 - **Partido duplicado:** cada clic en "Registrar partido" creaba un partido nuevo. Ahora se reutiliza el partido abierto para el mismo armado (`RatingsService.findOpenMatch`).
 - `defaultPlayer()` y `normalize()` estaban duplicados en varios archivos; ahora viven en `utils.js`.
+
+## Fase 2 — Mundo compartido
+
+- **Backend** en `server/`: auth con bcrypt, plantilla compartida, convocatoria, valoraciones, partidos y periódico.
+- **Privacidad:** cada uno solo edita su perfil; los votos individuales no se muestran al calificado (solo promedios).
+- **Frontend** conectado vía `provider: 'api'` en `config.js`.
 
 ## GitHub Pages
 

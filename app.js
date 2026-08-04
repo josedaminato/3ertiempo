@@ -13,14 +13,27 @@ let currentSession = null;
 let currentCombo = null;
 let currentMatch = null;
 let peerRatingIdx = -1;
-let selectedPlayerNames = loadPlayerSelection();
+let selectedPlayerNames = new Set();
 
-function loadPlayerSelection() {
+async function loadPlayerSelection() {
+  if (RatingsService.isApi()) {
+    try {
+      return await RatingsService.loadConvocation();
+    } catch {
+      return new Set();
+    }
+  }
   const saved = Utils.readJson(STORAGE_KEYS.selection, []);
   return new Set(Array.isArray(saved) ? saved : []);
 }
 
-function savePlayerSelection() {
+async function savePlayerSelection() {
+  if (RatingsService.isApi()) {
+    try {
+      await RatingsService.saveConvocation(selectedPlayerNames, players);
+    } catch { /* convocatoria local de respaldo */ }
+    return;
+  }
   Utils.writeJson(STORAGE_KEYS.selection, [...selectedPlayerNames]);
 }
 
@@ -53,6 +66,14 @@ async function loadPlayers() {
     const result = await PlayerApi.listPlayers();
     players = result.players.map(normalizePlayer);
     applyLocalPhotos();
+    if (RatingsService.isApi()) {
+      try {
+        await RatingsService.initFromPlayers(players);
+        selectedPlayerNames = await loadPlayerSelection();
+      } catch {
+        status.classList.add('error');
+      }
+    }
     status.textContent = result.message;
     if (result.offline) status.classList.add('error');
   } catch {
@@ -81,7 +102,7 @@ function normalizePlayer(p) {
   out.edad = Number(p.edad) || out.edad;
   out.altura = Number(p.altura) || out.altura;
   out.pie_habil = p.pie_habil || out.pie_habil;
-  out.foto_url = p.foto_url || '';
+  out.foto_url = Utils.safePhotoUrl(p.foto_url || '');
   STAT_FIELDS.forEach(f => {
     if (f === 'arquero') return;
     out[f] = Utils.roundStat(Number(p[f]) || 3);
@@ -172,22 +193,16 @@ async function savePlayer(idx) {
 
 // ─── Partido y votación postpartido ────────────────────────────────────────
 
-function registerCurrentMatch() {
+async function registerCurrentMatch() {
   if (!currentCombo || !currentSession) return;
 
-  // Reutilizar el partido abierto para este mismo armado de equipos en vez
-  // de crear uno nuevo cada vez que se toca el botón (antes cada clic
-  // generaba un partido distinto y dispersaba los votos).
-  currentMatch = RatingsService.findOpenMatch({
-    format: teamSize,
-    teamClaro: currentCombo.teamA,
-    teamOscuro: currentCombo.teamB
-  }) || RatingsService.createMatch({
+  currentMatch = await RatingsService.createMatch({
     format: teamSize,
     teamClaro: currentCombo.teamA,
     teamOscuro: currentCombo.teamB
   });
 
+  await RatingsService.loadMyMatchVotes(currentMatch.id);
   renderMatchVoting(currentMatch);
   document.getElementById('match-voting').classList.add('visible');
   document.getElementById('match-voting').scrollIntoView({ behavior: 'smooth' });
@@ -220,32 +235,52 @@ function renderMatchVoting(match) {
     }).join('');
 }
 
-function saveMatchVotes() {
+async function saveMatchVotes() {
   if (!currentMatch || !currentSession) return;
   const rows = document.querySelectorAll('#match-vote-list .match-player-row');
+  const votes = [];
   rows.forEach(row => {
     const selected = row.querySelector('input[type=radio]:checked');
     if (selected) {
-      RatingsService.saveMatchVote(
-        currentMatch.id,
-        currentSession.username,
-        selected.dataset.player,
-        Number(selected.value)
-      );
+      votes.push({
+        playerName: selected.dataset.player,
+        score: Number(selected.value)
+      });
     }
   });
-  const status = document.getElementById('match-vote-status');
-  const voteCount = RatingsService.getMatchVoteCount(currentMatch.id);
-  const minVotes = RatingsService.minVotesForNewspaper;
-  status.className = 'load-status';
 
-  if (voteCount >= minVotes) {
-    status.textContent = `Votos guardados · Periódico publicado (${voteCount} votos)`;
-    renderNewspaper(currentMatch);
-    document.getElementById('newspaper-section').scrollIntoView({ behavior: 'smooth' });
-  } else {
-    status.textContent = `Votos guardados · Faltan ${minVotes - voteCount} votos para publicar el periódico (${voteCount}/${minVotes})`;
-    renderNewspaper(currentMatch);
+  const status = document.getElementById('match-vote-status');
+  status.className = 'load-status saving';
+  status.textContent = 'Guardando votos…';
+
+  try {
+    if (RatingsService.isApi()) {
+      await RatingsService.saveAllMatchVotes(currentMatch.id, votes);
+    } else {
+      votes.forEach(vote => {
+        RatingsService.saveMatchVote(
+          currentMatch.id,
+          currentSession.username,
+          vote.playerName,
+          vote.score
+        );
+      });
+    }
+
+    const voteCount = RatingsService.getMatchVoteCount(currentMatch.id);
+    const minVotes = RatingsService.minVotesForNewspaper;
+
+    if (voteCount >= minVotes) {
+      status.textContent = `Votos guardados · Periódico publicado (${voteCount} votantes)`;
+      await renderNewspaper(currentMatch);
+      document.getElementById('newspaper-section').scrollIntoView({ behavior: 'smooth' });
+    } else {
+      status.textContent = `Votos guardados · Faltan ${minVotes - voteCount} votantes para publicar (${voteCount}/${minVotes})`;
+      await renderNewspaper(currentMatch);
+    }
+  } catch (error) {
+    status.textContent = error.message || 'Error al guardar';
+    status.className = 'load-status error';
   }
 }
 
@@ -255,7 +290,10 @@ function arrowFor(trend) {
   return '●';
 }
 
-function renderNewspaper(match) {
+async function renderNewspaper(match) {
+  if (RatingsService.isApi()) {
+    await RatingsService.refreshNewspaper(match);
+  }
   const edition = RatingsService.buildNewspaper(match);
   const section = document.getElementById('newspaper-section');
   const newspaper = document.getElementById('newspaper');
@@ -306,22 +344,25 @@ function renderNewspaper(match) {
   section.classList.add('visible');
 }
 
-function renderLatestNewspaper() {
+async function renderLatestNewspaper() {
   const section = document.getElementById('newspaper-section');
   const latest = RatingsService.listMatches().find(match =>
     RatingsService.getMatchVoteCount(match.id) > 0
-  );
+  ) || RatingsService.listMatches()[0];
   if (!latest) {
     section.classList.remove('visible');
     return;
   }
-  renderNewspaper(latest);
+  await renderNewspaper(latest);
 }
 
 // ─── Arranque ───────────────────────────────────────────────────────────────
 
 document.addEventListener('DOMContentLoaded', async () => {
   initFormatButtons();
+  if (!RatingsService.isApi()) {
+    selectedPlayerNames = await loadPlayerSelection();
+  }
   await loadPlayers();
   initAuth();
   document.getElementById('btn-armar').addEventListener('click', () => armarEquipos(false));
