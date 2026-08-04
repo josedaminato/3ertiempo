@@ -11,19 +11,22 @@ const RatingsService = (() => {
   const CARD_KEYS = ['velocidad', 'resistencia', 'fuerza', 'tiro', 'pase', 'regate', 'defensa'];
   const ARQUERO_KEY = 'arquero';
   const PEER_KEYS = [...CARD_KEYS, ARQUERO_KEY];
+  // Cantidad de VOTANTES (personas), no de votos individuales. Antes se
+  // contaban votos totales (jugador × votante), así que un solo usuario
+  // votando a 6 jugadores ya publicaba el periódico.
   const MIN_VOTES_FOR_NEWSPAPER = 6;
 
   function normalizePeerStats(stats) {
     const out = {};
     PEER_KEYS.forEach(key => {
-      if (stats?.[key] != null) out[key] = clamp(stats[key]);
+      if (stats?.[key] != null) out[key] = Utils.clamp(stats[key]);
     });
     if (stats?.fisico != null && out.resistencia == null) {
-      out.resistencia = clamp(stats.fisico);
-      out.fuerza = clamp(stats.fisico);
+      out.resistencia = Utils.clamp(stats.fisico);
+      out.fuerza = Utils.clamp(stats.fisico);
     }
     if (stats?.portero != null && out.arquero == null) {
-      out.arquero = clamp(stats.portero);
+      out.arquero = Utils.clamp(stats.portero);
     }
     CARD_KEYS.forEach(key => {
       if (out[key] == null) out[key] = 3;
@@ -31,50 +34,33 @@ const RatingsService = (() => {
     return out;
   }
 
-  function normalize(value) {
-    return String(value || '').trim().toLocaleLowerCase('es');
-  }
-
-  function read(key, fallback) {
-    try { return JSON.parse(localStorage.getItem(key) || JSON.stringify(fallback)); }
-    catch { return fallback; }
-  }
-
-  function write(key, value) {
-    localStorage.setItem(key, JSON.stringify(value));
-  }
-
-  function clamp(value) {
-    return Math.max(1, Math.min(5, Math.round(Number(value) || 3)));
-  }
-
   function savePeerRating(rater, ratedPlayer, stats) {
-    if (normalize(rater) === normalize(ratedPlayer)) {
+    if (Utils.normalize(rater) === Utils.normalize(ratedPlayer)) {
       throw new Error('No podés calificarte a vos mismo');
     }
-    const all = read(PEER_KEY, {});
-    const playerKey = normalize(ratedPlayer);
-    const raterKey = normalize(rater);
+    const all = Utils.readJson(PEER_KEY, {});
+    const playerKey = Utils.normalize(ratedPlayer);
+    const raterKey = Utils.normalize(rater);
     if (!all[playerKey]) all[playerKey] = {};
     all[playerKey][raterKey] = {
       rater,
       createdAt: new Date().toISOString(),
       stats: Object.fromEntries(PEER_KEYS.map(key => [
         key,
-        clamp(stats[key] ?? (key === ARQUERO_KEY ? 1 : 3))
+        Utils.clamp(stats[key] ?? (key === ARQUERO_KEY ? 1 : 3))
       ]))
     };
-    write(PEER_KEY, all);
+    Utils.writeJson(PEER_KEY, all);
   }
 
   function getMyPeerRating(rater, ratedPlayer) {
-    const all = read(PEER_KEY, {});
-    return all[normalize(ratedPlayer)]?.[normalize(rater)]?.stats || null;
+    const all = Utils.readJson(PEER_KEY, {});
+    return all[Utils.normalize(ratedPlayer)]?.[Utils.normalize(rater)]?.stats || null;
   }
 
   function getPeerAverage(playerName) {
-    const all = read(PEER_KEY, {});
-    const ratings = Object.values(all[normalize(playerName)] || {});
+    const all = Utils.readJson(PEER_KEY, {});
+    const ratings = Object.values(all[Utils.normalize(playerName)] || {});
     if (!ratings.length) return { count: 0, stats: null };
 
     const stats = {};
@@ -96,7 +82,7 @@ const RatingsService = (() => {
   }
 
   function createMatch({ format, teamClaro, teamOscuro }) {
-    const matches = read(MATCHES_KEY, []);
+    const matches = Utils.readJson(MATCHES_KEY, []);
     const match = {
       id: `match_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
       date: new Date().toISOString(),
@@ -106,54 +92,68 @@ const RatingsService = (() => {
       status: 'voting'
     };
     matches.unshift(match);
-    write(MATCHES_KEY, matches.slice(0, 30));
+    Utils.writeJson(MATCHES_KEY, matches.slice(0, 30));
     return match;
   }
 
   function listMatches() {
-    return read(MATCHES_KEY, []);
+    return Utils.readJson(MATCHES_KEY, []);
   }
 
   function getMatch(id) {
     return listMatches().find(match => match.id === id) || null;
   }
 
+  /** Partido "abierto" más reciente para un mismo armado de equipos, si
+   * existe. Permite reutilizar el partido en vez de crear uno nuevo cada vez
+   * que se toca "Registrar partido". */
+  function findOpenMatch({ format, teamClaro, teamOscuro }) {
+    const claroKeys = teamClaro.map(p => Utils.normalize(p.nombre)).sort();
+    const oscuroKeys = teamOscuro.map(p => Utils.normalize(p.nombre)).sort();
+    return listMatches().find(match => {
+      if (match.format !== format) return false;
+      const mClaro = [...match.teamClaro].map(Utils.normalize).sort();
+      const mOscuro = [...match.teamOscuro].map(Utils.normalize).sort();
+      return JSON.stringify(mClaro) === JSON.stringify(claroKeys) &&
+        JSON.stringify(mOscuro) === JSON.stringify(oscuroKeys);
+    }) || null;
+  }
+
   function saveMatchVote(matchId, rater, ratedPlayer, score) {
-    if (normalize(rater) === normalize(ratedPlayer)) {
+    if (Utils.normalize(rater) === Utils.normalize(ratedPlayer)) {
       throw new Error('No podés votarte a vos mismo');
     }
-    const all = read(MATCH_VOTES_KEY, {});
+    const all = Utils.readJson(MATCH_VOTES_KEY, {});
     if (!all[matchId]) all[matchId] = {};
-    if (!all[matchId][normalize(rater)]) all[matchId][normalize(rater)] = {};
-    all[matchId][normalize(rater)][normalize(ratedPlayer)] = {
+    if (!all[matchId][Utils.normalize(rater)]) all[matchId][Utils.normalize(rater)] = {};
+    all[matchId][Utils.normalize(rater)][Utils.normalize(ratedPlayer)] = {
       playerName: ratedPlayer,
-      score: clamp(score),
+      score: Utils.clamp(score),
       votedAt: new Date().toISOString()
     };
-    write(MATCH_VOTES_KEY, all);
+    Utils.writeJson(MATCH_VOTES_KEY, all);
   }
 
   function getMyMatchVotes(matchId, rater) {
-    return read(MATCH_VOTES_KEY, {})[matchId]?.[normalize(rater)] || {};
+    return Utils.readJson(MATCH_VOTES_KEY, {})[matchId]?.[Utils.normalize(rater)] || {};
   }
 
+  /** Cantidad de VOTANTES únicos que ya cargaron al menos un voto en este
+   * partido (antes sumaba votos individuales por jugador, ver comentario en
+   * MIN_VOTES_FOR_NEWSPAPER). */
   function getMatchVoteCount(matchId) {
-    const matchVotes = read(MATCH_VOTES_KEY, {})[matchId] || {};
-    let count = 0;
-    Object.values(matchVotes).forEach(raterVotes => {
-      count += Object.keys(raterVotes).length;
-    });
-    return count;
+    const matchVotes = Utils.readJson(MATCH_VOTES_KEY, {})[matchId] || {};
+    return Object.keys(matchVotes).length;
   }
 
   function getMatchResults(matchId) {
-    const matchVotes = read(MATCH_VOTES_KEY, {})[matchId] || {};
+    const matchVotes = Utils.readJson(MATCH_VOTES_KEY, {})[matchId] || {};
     const byPlayer = {};
     Object.values(matchVotes).forEach(raterVotes => {
       Object.values(raterVotes).forEach(vote => {
-        const key = normalize(vote.playerName);
+        const key = Utils.normalize(vote.playerName);
         if (!byPlayer[key]) byPlayer[key] = { playerName: vote.playerName, scores: [] };
-        byPlayer[key].scores.push(clamp(vote.score));
+        byPlayer[key].scores.push(Utils.clamp(vote.score));
       });
     });
 
@@ -250,6 +250,7 @@ const RatingsService = (() => {
     getMyPeerRating,
     getPeerAverage,
     createMatch,
+    findOpenMatch,
     listMatches,
     getMatch,
     saveMatchVote,

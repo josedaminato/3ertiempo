@@ -10,10 +10,6 @@ const AuthService = (() => {
   const SESSION_KEY = '3ertiempo_session_v1';
   const PASSWORD_LENGTH = 6;
 
-  function normalize(value) {
-    return String(value || '').trim().toLocaleLowerCase('es');
-  }
-
   function validatePassword(password) {
     const clean = String(password || '').trim();
     if (!/^\d{6}$/.test(clean)) {
@@ -27,12 +23,11 @@ const AuthService = (() => {
   }
 
   function readUsers() {
-    try { return JSON.parse(localStorage.getItem(USERS_KEY) || '{}'); }
-    catch { return {}; }
+    return Utils.readJson(USERS_KEY, {});
   }
 
   function writeUsers(users) {
-    localStorage.setItem(USERS_KEY, JSON.stringify(users));
+    Utils.writeJson(USERS_KEY, users);
   }
 
   function bytesToHex(bytes) {
@@ -69,7 +64,7 @@ const AuthService = (() => {
 
   function isRegisteredSync(username) {
     if (!username) return false;
-    return Boolean(readUsers()[normalize(username)]);
+    return Boolean(readUsers()[Utils.normalize(username)]);
   }
 
   function listRegisteredUsernames() {
@@ -94,12 +89,12 @@ const AuthService = (() => {
         username: cleanName,
         password: cleanPassword
       });
-      localStorage.setItem(SESSION_KEY, JSON.stringify(data.user));
+      Utils.writeJson(SESSION_KEY, data.user);
       return data.user;
     }
 
     const users = readUsers();
-    const key = normalize(cleanName);
+    const key = Utils.normalize(cleanName);
     if (users[key]) throw new Error('Este jugador ya tiene contraseña. Usá Ingresar.');
 
     const salt = randomSalt();
@@ -112,7 +107,7 @@ const AuthService = (() => {
     writeUsers(users);
 
     const session = { username: cleanName, localPrototype: true };
-    localStorage.setItem(SESSION_KEY, JSON.stringify(session));
+    Utils.writeJson(SESSION_KEY, session);
     return session;
   }
 
@@ -126,23 +121,22 @@ const AuthService = (() => {
         username: cleanName,
         password: cleanPassword
       });
-      localStorage.setItem(SESSION_KEY, JSON.stringify(data.user));
+      Utils.writeJson(SESSION_KEY, data.user);
       return data.user;
     }
 
-    const account = readUsers()[normalize(cleanName)];
+    const account = readUsers()[Utils.normalize(cleanName)];
     if (!account) throw new Error('Primera vez: creá tu contraseña de 6 números');
     const candidate = await digest(cleanPassword, account.salt);
     if (candidate !== account.passwordHash) throw new Error('Contraseña incorrecta');
 
     const session = { username: account.username, localPrototype: true };
-    localStorage.setItem(SESSION_KEY, JSON.stringify(session));
+    Utils.writeJson(SESSION_KEY, session);
     return session;
   }
 
   function getSession() {
-    try { return JSON.parse(localStorage.getItem(SESSION_KEY) || 'null'); }
-    catch { return null; }
+    return Utils.readJson(SESSION_KEY, null);
   }
 
   async function logout() {
@@ -163,6 +157,6 @@ const AuthService = (() => {
     login,
     logout,
     getSession,
-    normalize
+    normalize: Utils.normalize
   };
 })();

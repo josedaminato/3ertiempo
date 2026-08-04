@@ -29,38 +29,8 @@ const PlayerApi = (() => {
     return 'local';
   }
 
-  function defaultPlayer(nombre) {
-    const p = {
-      nombre,
-      posicion_1: 'MED',
-      posicion_2: 'DEL',
-      juega_arco: true,
-      edad: 30,
-      altura: 175,
-      pie_habil: 'Derecho',
-      foto_url: ''
-    };
-    STAT_FIELDS.forEach(f => { p[f] = 3; });
-    p.arquero = 1;
-    p.juega_arco = false;
-    return p;
-  }
-
-  function readJson(key, fallback) {
-    try {
-      const raw = localStorage.getItem(key);
-      return raw ? JSON.parse(raw) : fallback;
-    } catch {
-      return fallback;
-    }
-  }
-
-  function writeJson(key, value) {
-    localStorage.setItem(key, JSON.stringify(value));
-  }
-
   function seedRoster() {
-    return APP_CONFIG.defaultPlayerNames.map(n => defaultPlayer(n));
+    return APP_CONFIG.defaultPlayerNames.map(n => Utils.defaultPlayer(n));
   }
 
   async function postJson(url, body, options) {
@@ -78,9 +48,9 @@ const PlayerApi = (() => {
 
   const local = {
     async listPlayers() {
-      const roster = readJson(STORAGE_KEYS.roster, null);
+      const roster = Utils.readJson(STORAGE_KEYS.roster, null);
       const players = roster || seedRoster();
-      if (!roster) writeJson(STORAGE_KEYS.roster, players);
+      if (!roster) Utils.writeJson(STORAGE_KEYS.roster, players);
       return {
         players,
         message: `${players.length} jugadores · modo local (este dispositivo)`,
@@ -89,7 +59,7 @@ const PlayerApi = (() => {
     },
 
     async savePlayer(player, { create }) {
-      const roster = readJson(STORAGE_KEYS.roster, seedRoster());
+      const roster = Utils.readJson(STORAGE_KEYS.roster, seedRoster());
       const idx = roster.findIndex(p =>
         p.nombre.trim().toLowerCase() === player.nombre.trim().toLowerCase()
       );
@@ -101,14 +71,14 @@ const PlayerApi = (() => {
       } else {
         throw new Error('Jugador no encontrado');
       }
-      writeJson(STORAGE_KEYS.roster, roster);
+      Utils.writeJson(STORAGE_KEYS.roster, roster);
       return { ok: true };
     },
 
     async uploadPhoto(nombre, photo) {
-      const fotos = readJson(STORAGE_KEYS.fotos, {});
+      const fotos = Utils.readJson(STORAGE_KEYS.fotos, {});
       fotos[nombre] = photo.dataUrl;
-      writeJson(STORAGE_KEYS.fotos, fotos);
+      Utils.writeJson(STORAGE_KEYS.fotos, fotos);
       return photo.dataUrl;
     }
   };

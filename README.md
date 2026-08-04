@@ -6,11 +6,9 @@ App web para armar equipos de fútbol parejos entre amigos: cartas estilo FIFA, 
 
 **https://josedaminato.github.io/3ertiempo/**
 
-> GitHub Pages muestra la app funcionando. No es solo una demo vacía: el código fuente está en este mismo repositorio.
+> GitHub Pages muestra la app funcionando. El código fuente está en este mismo repositorio.
 
 ## Compartir / descargar el código completo
-
-Elegí una de estas opciones:
 
 ### Opción 1 — Un solo archivo (recomendado para compartir)
 
@@ -52,15 +50,34 @@ Abrí http://localhost:8765/index.html
 
 ## Archivos
 
+Fase 1 de la auditoría: se sacó todo el JS y CSS que vivía inline en
+`index.html` (~1370 líneas de `<script>` + ~1050 de `<style>`) a módulos
+separados, sin cambiar comportamiento ni look de la app.
+
 | Archivo | Descripción |
 |---------|-------------|
-| `index.html` | Interfaz completa |
+| `index.html` | Solo estructura HTML |
+| `styles.css` | Todo el CSS de la app |
+| `utils.js` | Helpers compartidos: `normalize`, storage, `escapeHtml`, `defaultPlayer` |
 | `config.js` | Configuración (provider, URLs) |
 | `api.js` | Capa de datos |
 | `auth.js` | Autenticación (prototipo local) |
-| `ratings.js` | Evaluaciones y periódico |
+| `ratings.js` | Evaluaciones, partidos y periódico |
+| `cards.js` | Cálculo y render de las cartas estilo FIFA |
+| `teams.js` | Balanceo de equipos, formaciones, radar |
+| `ui.js` | Login, grid de jugadores, modales de edición/valoración, fotos |
+| `app.js` | Estado global, carga de datos, registro de partido/votación, arranque |
 | `Code.gs` | Backend Google Sheets / Apps Script |
 | `jugadores.csv` | Plantilla inicial |
+
+Cada `<script src>` en `index.html` sigue este orden de carga porque
+son scripts clásicos (no ES modules) que comparten el scope global.
+
+## Cambios de Fase 1 (sin tocar comportamiento visible)
+
+- **Bug del periódico:** contaba votos totales en vez de votantes únicos. Ahora `RatingsService.getMatchVoteCount` cuenta personas que votaron.
+- **Partido duplicado:** cada clic en "Registrar partido" creaba un partido nuevo. Ahora se reutiliza el partido abierto para el mismo armado (`RatingsService.findOpenMatch`).
+- `defaultPlayer()` y `normalize()` estaban duplicados en varios archivos; ahora viven en `utils.js`.
 
 ## GitHub Pages
 
