@@ -155,6 +155,7 @@
     .login-hint.register { color: var(--success); }
 
     .login-message { min-height: 1.2rem; color: var(--text-muted); font-size: 0.78rem; }
+    .login-message.success { color: var(--success); }
     .login-message.error { color: var(--error); }
     .prototype-note { margin-top: 0.8rem; color: var(--warning); font-size: 0.68rem; }
 
@@ -1059,7 +1060,7 @@
     <div class="login-card">
       <div class="login-ball">⚽</div>
       <h2>3er Tiempo</h2>
-      <p class="login-copy">Cada jugador es un usuario. Elegí tu nombre y creá una contraseña de <strong>6 números</strong>. Queda guardada para que ingreses cuando quieras.</p>
+      <p class="login-copy">Cada jugador es un usuario. Elegí tu nombre y creá una contraseña de <strong>6 números</strong>. Recordala: la vas a necesitar cada vez que ingreses.</p>
       <form class="login-form" id="login-form">
         <label>
           Tu jugador
@@ -1632,7 +1633,7 @@
         hint.className = 'login-hint';
       } else {
         button.textContent = 'Crear mi contraseña';
-        hint.textContent = 'Primera vez: elegí 6 números. Quedan guardados para la próxima.';
+        hint.textContent = 'Primera vez: elegí 6 números y recordalos. Van a quedar guardados para ingresar cuando quieras.';
         hint.className = 'login-hint register';
       }
       passwordInput.focus();
@@ -1660,6 +1661,11 @@
           ? await AuthService.login(username, password)
           : await AuthService.register(username, password);
         document.getElementById('login-password').value = '';
+        if (!registered) {
+          message.textContent = 'Cuenta creada. Recordá tu contraseña de 6 dígitos.';
+          message.className = 'login-message success';
+          await new Promise(resolve => setTimeout(resolve, 1600));
+        }
         populateLoginPlayers();
         showAppSession();
       } catch (error) {
