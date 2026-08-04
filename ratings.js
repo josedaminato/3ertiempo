@@ -9,16 +9,21 @@ const RatingsService = (() => {
   const MATCHES_KEY = '3ertiempo_matches_v1';
   const MATCH_VOTES_KEY = '3ertiempo_match_votes_v1';
   const CARD_KEYS = ['velocidad', 'resistencia', 'fuerza', 'tiro', 'pase', 'regate', 'defensa'];
+  const ARQUERO_KEY = 'arquero';
+  const PEER_KEYS = [...CARD_KEYS, ARQUERO_KEY];
   const MIN_VOTES_FOR_NEWSPAPER = 6;
 
   function normalizePeerStats(stats) {
     const out = {};
-    CARD_KEYS.forEach(key => {
+    PEER_KEYS.forEach(key => {
       if (stats?.[key] != null) out[key] = clamp(stats[key]);
     });
     if (stats?.fisico != null && out.resistencia == null) {
       out.resistencia = clamp(stats.fisico);
       out.fuerza = clamp(stats.fisico);
+    }
+    if (stats?.portero != null && out.arquero == null) {
+      out.arquero = clamp(stats.portero);
     }
     CARD_KEYS.forEach(key => {
       if (out[key] == null) out[key] = 3;
@@ -54,7 +59,10 @@ const RatingsService = (() => {
     all[playerKey][raterKey] = {
       rater,
       createdAt: new Date().toISOString(),
-      stats: Object.fromEntries(CARD_KEYS.map(key => [key, clamp(stats[key])]))
+      stats: Object.fromEntries(PEER_KEYS.map(key => [
+        key,
+        clamp(stats[key] ?? (key === ARQUERO_KEY ? 1 : 3))
+      ]))
     };
     write(PEER_KEY, all);
   }
@@ -76,6 +84,14 @@ const RatingsService = (() => {
         return sum + normalized[key];
       }, 0) / ratings.length;
     });
+
+    const arqueroVotes = ratings
+      .map(rating => normalizePeerStats(rating.stats).arquero)
+      .filter(value => value != null);
+    if (arqueroVotes.length) {
+      stats.arquero = arqueroVotes.reduce((sum, value) => sum + value, 0) / arqueroVotes.length;
+    }
+
     return { count: ratings.length, stats };
   }
 
@@ -226,7 +242,9 @@ const RatingsService = (() => {
   }
 
   return {
-    cardKeys: CARD_KEYS,
+    cardKeys: PEER_KEYS,
+    fieldKeys: CARD_KEYS,
+    arqueroKey: ARQUERO_KEY,
     minVotesForNewspaper: MIN_VOTES_FOR_NEWSPAPER,
     savePeerRating,
     getMyPeerRating,

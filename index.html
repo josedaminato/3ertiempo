@@ -436,6 +436,15 @@
       fill: #f5e6a8;
     }
 
+    .fifa-arq {
+      margin-top: 0.2rem;
+      font-size: 0.58rem;
+      font-weight: 800;
+      letter-spacing: 0.06em;
+      text-align: center;
+      opacity: 0.78;
+    }
+
     .fifa-card-action {
       margin-top: 0.2rem;
       text-align: center;
@@ -1157,7 +1166,7 @@
         <button class="modal-close" id="peer-modal-close" aria-label="Cerrar">&times;</button>
       </div>
       <div class="modal-preview" id="peer-modal-preview"></div>
-      <p class="peer-note">Calificá velocidad, resistencia y fuerza por separado. El FÍS de la carta es el promedio de esos tres. El arquero lo define cada jugador en su perfil.</p>
+      <p class="peer-note">Calificá los atributos de campo por separado. El arquero también lo califican los demás y no promedia en la media general.</p>
       <form class="peer-form-grid" id="peer-rating-form"></form>
       <div class="modal-footer">
         <button type="button" class="btn-save" id="btn-save-peer-rating">Guardar valoración</button>
@@ -1287,6 +1296,8 @@
         foto_url: ''
       };
       STAT_FIELDS.forEach(f => { p[f] = 3; });
+      p.arquero = 1;
+      p.juega_arco = false;
       return p;
     }
 
@@ -1400,8 +1411,14 @@
       };
     }
 
-    function goalkeeperRating(p) {
+    function arqueroRating(p) {
+      const peer = RatingsService.getPeerAverage(p.nombre);
+      if (peer.stats?.arquero != null) return roundStat(peer.stats.arquero);
       return roundStat(Number(p.arquero) || 1);
+    }
+
+    function goalkeeperRating(p) {
+      return arqueroRating(p);
     }
 
     function isGoalkeeperCapable(p) {
@@ -1441,7 +1458,7 @@
         regate,
         defensa,
         fisico,
-        portero: goalkeeperRating(p),
+        arquero: arqueroRating(p),
         media: Math.round(avg(...cardStats) * 20),
         cardStats,
         physBreakdown: `Vel ${velocidad.toFixed(1)} · Res ${resistencia.toFixed(1)} · Fue ${fuerza.toFixed(1)}`,
@@ -1501,6 +1518,7 @@
                 return `<div class="fifa-stat"><abbr title="${escapeHtml(title)}">${lbl}</abbr><span>${c.cardStats[i].toFixed(1)}</span></div>`;
               }).join('')}
             </div>
+            <div class="fifa-arq" title="Atributo aparte: no entra en la media general">ARQ ${c.arquero.toFixed(1)}</div>
             <div class="fifa-meta">${p.edad}a · ${p.altura}cm · ${escapeHtml(p.pie_habil)}</div>
             <div class="fifa-card-action">${isCurrentUser(p) ? 'Editar perfil' : 'Calificar jugador'}</div>
           </div>
@@ -1733,21 +1751,22 @@
         out.posicion_1 = p.posicion_1 || out.posicion_1;
         out.posicion_2 = p.posicion_2 || out.posicion_2;
       }
-      out.juega_arco = roundStat(
-        Number(p.arquero) ||
-        avg(Number(p.atajar) || 3, Number(p.reflejos) || 3, Number(p.salidas) || 3)
-      ) >= GK_MIN_RATING;
       out.edad = Number(p.edad) || out.edad;
       out.altura = Number(p.altura) || out.altura;
       out.pie_habil = p.pie_habil || out.pie_habil;
       out.foto_url = p.foto_url || '';
       STAT_FIELDS.forEach(f => {
+        if (f === 'arquero') return;
         out[f] = roundStat(Number(p[f]) || 3);
       });
-      out.arquero = roundStat(
-        Number(p.arquero) ||
-        avg(Number(p.atajar) || 3, Number(p.reflejos) || 3, Number(p.salidas) || 3)
-      );
+      if (p.arquero != null && p.arquero !== '') {
+        out.arquero = roundStat(Number(p.arquero));
+      } else if (p.atajar != null || p.reflejos != null || p.salidas != null) {
+        out.arquero = roundStat(avg(Number(p.atajar) || 3, Number(p.reflejos) || 3, Number(p.salidas) || 3));
+      } else {
+        out.arquero = 1;
+      }
+      out.juega_arco = out.arquero >= GK_MIN_RATING;
       return out;
     }
 
@@ -1842,25 +1861,8 @@
             </div>
           </div>
         </div>
-        <div class="form-section">
-          <h4>Arquero</h4>
-          <p class="peer-note">Atributo propio, aparte de las valoraciones de los demás. Con 3 a 5 aparecen guantes en tu carta.</p>
-          <div class="field">
-            <label>Nivel de arquero (1–5)</label>
-            <input type="number" name="arquero" min="1" max="5" step="1" value="${goalkeeperRating(p)}">
-          </div>
-        </div>
         <div class="peer-note">
-          Los atributos de campo no se autoeditan. Arrancan con valor base 3 y se reemplazan por el promedio de las valoraciones de los demás jugadores.
-        </div>
-        <div class="form-section">
-          <h4>Físico (referencia)</h4>
-          <p class="peer-note">El FÍS de la carta sale del promedio de velocidad, resistencia y fuerza que votan los demás.</p>
-          <div class="form-grid cols-3">
-            <div class="field"><label>Velocidad base</label><input type="number" value="${physicalBase(p).velocidad}" disabled></div>
-            <div class="field"><label>Resistencia base</label><input type="number" value="${physicalBase(p).resistencia}" disabled></div>
-            <div class="field"><label>Fuerza base</label><input type="number" value="${physicalBase(p).fuerza}" disabled></div>
-          </div>
+          Los atributos de la carta los califican los demás jugadores. Vos solo editás posiciones, foto y datos personales.
         </div>`;
     }
 
@@ -1941,8 +1943,6 @@
       base.pie_habil = form.querySelector('[name=pie_habil]').value;
       base.posicion_1 = form.querySelector('[name=posicion_1]').value;
       base.posicion_2 = form.querySelector('[name=posicion_2]').value;
-      base.arquero = roundStat(Number(form.querySelector('[name=arquero]')?.value) || base.arquero || 3);
-      base.juega_arco = base.arquero >= GK_MIN_RATING;
       base.foto_url = String(form.querySelector('[name=foto_url]')?.value || '').trim();
       if (pendingPhoto) base.foto_url = pendingPhoto.dataUrl;
       STAT_FIELDS.forEach(f => {
@@ -1982,17 +1982,20 @@
       tiro: 'Remate',
       pase: 'Pase',
       regate: 'Regate',
-      defensa: 'Defensa'
+      defensa: 'Defensa',
+      arquero: 'Arquero'
     };
 
     const PEER_GROUPS = [
       { title: 'Físico', keys: ['velocidad', 'resistencia', 'fuerza'] },
       { title: 'Técnico', keys: ['regate', 'pase', 'tiro'] },
-      { title: 'Defensivo', keys: ['defensa'] }
+      { title: 'Defensivo', keys: ['defensa'] },
+      { title: 'Arquero', keys: ['arquero'], note: 'Atributo aparte: no suma en la media general de la carta.' }
     ];
 
     function peerRatingDefault(key, player, existing, base) {
       if (existing?.[key] != null) return Math.round(existing[key]);
+      if (key === 'arquero') return Math.round(Number(player.arquero) || 1);
       if (base[key] != null) return Math.round(base[key]);
       return 3;
     }
@@ -2022,6 +2025,7 @@
       document.getElementById('peer-save-status').className = 'save-status';
       document.getElementById('peer-rating-form').innerHTML = PEER_GROUPS.map(group => `
         <div class="peer-group-title">${group.title}</div>
+        ${group.note ? `<p class="peer-note">${group.note}</p>` : ''}
         ${group.keys.map(key => buildPeerRatingRow(key, player, existing, base)).join('')}
       `).join('');
       document.getElementById('peer-modal-overlay').classList.add('open');
@@ -2038,7 +2042,8 @@
       const form = document.getElementById('peer-rating-form');
       const stats = {};
       RatingsService.cardKeys.forEach(key => {
-        stats[key] = Number(form.querySelector(`[name=peer_${key}]:checked`)?.value || 3);
+        stats[key] = Number(form.querySelector(`[name=peer_${key}]:checked`)?.value ||
+          (key === 'arquero' ? 1 : 3));
       });
 
       const status = document.getElementById('peer-save-status');

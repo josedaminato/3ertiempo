@@ -41,6 +41,8 @@ const PlayerApi = (() => {
       foto_url: ''
     };
     STAT_FIELDS.forEach(f => { p[f] = 3; });
+    p.arquero = 1;
+    p.juega_arco = false;
     return p;
   }
 
