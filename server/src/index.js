@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import cookieSession from 'cookie-session';
@@ -9,11 +10,17 @@ import { registerMatchRoutes, registerConvocationRoutes } from './routes/matches
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT) || 3000;
-const SESSION_SECRET = process.env.SESSION_SECRET || 'dev-secret-cambiar-en-produccion';
-const corsOrigins = (process.env.CORS_ORIGIN || 'http://localhost:8765,http://127.0.0.1:8765')
+const DEFAULT_SECRET = 'dev-secret-cambiar-en-produccion';
+const SESSION_SECRET = process.env.SESSION_SECRET || DEFAULT_SECRET;
+const corsOrigins = (process.env.CORS_ORIGIN || 'http://localhost:8765,http://127.0.0.1:8765,https://3ertiempo.online,https://josedaminato.github.io')
   .split(',')
   .map(s => s.trim())
   .filter(Boolean);
+
+if (process.env.NODE_ENV === 'production' && SESSION_SECRET === DEFAULT_SECRET) {
+  console.error('FATAL: definí SESSION_SECRET en producción');
+  process.exit(1);
+}
 
 const app = express();
 

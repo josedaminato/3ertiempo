@@ -86,7 +86,7 @@ export function registerPlayerRoutes(app) {
       `).run(
         body.posicion_1 || player.position_1,
         body.posicion_2 || player.position_2,
-        body.juega_arco ? 1 : 0,
+        body.juega_arco != null ? (body.juega_arco ? 1 : 0) : player.plays_goalkeeper,
         Number(body.edad) || player.age,
         Number(body.altura) || player.height,
         body.pie_habil || player.preferred_foot,

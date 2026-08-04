@@ -115,6 +115,15 @@ export function registerMatchRoutes(app) {
       if (!match) return res.status(404).json({ ok: false, error: 'Partido no encontrado' });
 
       const votes = req.body?.votes || [];
+      if (!votes.length) {
+        return res.status(400).json({ ok: false, error: 'No hay votos para guardar' });
+      }
+
+      const participants = new Set([
+        ...JSON.parse(match.team_claro_json || '[]').map(normalizeName),
+        ...JSON.parse(match.team_oscuro_json || '[]').map(normalizeName)
+      ]);
+
       const upsert = db.prepare(`
         INSERT INTO match_votes (match_id, rater_user_id, rated_player_id, score, updated_at)
         VALUES (?, ?, ?, ?, datetime('now'))
@@ -125,8 +134,13 @@ export function registerMatchRoutes(app) {
 
       const tx = db.transaction(() => {
         votes.forEach(vote => {
-          const rated = getPlayerByName(vote.playerName || vote.player);
-          if (!rated) return;
+          const name = String(vote.playerName || vote.player || '').trim();
+          if (!name) throw new Error('Falta nombre del jugador');
+          const rated = getPlayerByName(name);
+          if (!rated) throw new Error(`Jugador no encontrado: ${name}`);
+          if (!participants.has(normalizeName(rated.name))) {
+            throw new Error(`${rated.name} no participó en este partido`);
+          }
           if (rated.id === user.player_id) {
             throw new Error('No podés votarte a vos mismo');
           }
