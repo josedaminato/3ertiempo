@@ -1421,13 +1421,19 @@
       return arqueroRating(p);
     }
 
+    function hasGoalkeeperGloves(p) {
+      const rating = arqueroRating(p);
+      return rating >= GK_MIN_RATING && rating <= 5;
+    }
+
     function isGoalkeeperCapable(p) {
-      return goalkeeperRating(p) >= GK_MIN_RATING;
+      return hasGoalkeeperGloves(p);
     }
 
     function glovesBadgeHtml(p) {
-      if (!isGoalkeeperCapable(p)) return '';
-      return `<span class="fifa-gk-badge" title="Arquero ${goalkeeperRating(p)}/5" aria-label="Arquero aceptable">
+      if (!hasGoalkeeperGloves(p)) return '';
+      const rating = arqueroRating(p);
+      return `<span class="fifa-gk-badge" title="Arquero ${rating}/5 · Guantes desde 3" aria-label="Arquero ${rating} de 5">
         <svg viewBox="0 0 24 24" aria-hidden="true">
           <path d="M7 4c-1.5 1.2-2.3 3-2.3 5.1V14c0 2.2 1.8 4 4 4h.4c.4-1.3 1.5-2.3 2.9-2.3s2.5 1 2.9 2.3H15c2.2 0 4-1.8 4-4V9.1C19 7 18.2 5.2 16.7 4H15v3.5c0 .8-.7 1.5-1.5 1.5S12 8.3 12 7.5V4h-2v3.5c0 .8-.7 1.5-1.5 1.5S7 8.3 7 7.5V4z"/>
         </svg>
@@ -1990,7 +1996,7 @@
       { title: 'Físico', keys: ['velocidad', 'resistencia', 'fuerza'] },
       { title: 'Técnico', keys: ['regate', 'pase', 'tiro'] },
       { title: 'Defensivo', keys: ['defensa'] },
-      { title: 'Arquero', keys: ['arquero'], note: 'Atributo aparte: no suma en la media general de la carta.' }
+      { title: 'Arquero', keys: ['arquero'], note: 'Atributo aparte: no suma en la media general. Con 3, 4 o 5 aparecen guantes en la carta.' }
     ];
 
     function peerRatingDefault(key, player, existing, base) {
