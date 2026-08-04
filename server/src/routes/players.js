@@ -23,7 +23,7 @@ function canEditPlayer(user, playerRow) {
 }
 
 function listAllPlayers() {
-  const rows = db.prepare('SELECT * FROM players ORDER BY name COLLATE NOCASE').all();
+  const rows = db.prepare('SELECT * FROM players ORDER BY lower(name)').all();
   return rows.map(row => rowToPlayer(row, computePeerAverages(row.id)));
 }
 

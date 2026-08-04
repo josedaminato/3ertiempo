@@ -217,7 +217,7 @@ export function registerConvocationRoutes(app) {
     const rows = db.prepare(`
       SELECT p.name FROM convocation c
       JOIN players p ON p.id = c.player_id
-      ORDER BY p.name COLLATE NOCASE
+      ORDER BY lower(p.name)
     `).all();
     res.json({
       ok: true,
@@ -231,13 +231,13 @@ export function registerConvocationRoutes(app) {
       const user = getUserById(req.session.userId);
       const names = Array.isArray(req.body?.players) ? req.body.players : [];
 
-      db.prepare('DELETE FROM convocation').run();
       const insert = db.prepare(`
         INSERT INTO convocation (player_id, selected_by, updated_at)
         VALUES (?, ?, datetime('now'))
       `);
 
       const tx = db.transaction(() => {
+        db.prepare('DELETE FROM convocation').run();
         names.forEach(name => {
           const player = getPlayerByName(name);
           if (player) insert.run(player.id, user.id);

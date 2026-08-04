@@ -17,7 +17,7 @@ const APP_CONFIG = {
   /** Backend compartido — todos ven el mismo mundo */
   apiBaseUrl: IS_LOCAL_DEV
     ? 'http://localhost:3000'
-    : 'https://api.3ertiempo.online',
+    : 'https://3ertiempo.online/api',
 
   defaultPlayerNames: [
     'Marcelo', 'Maxi', 'Turco', 'Gato', 'Mariano', 'Charly', 'Gonza', 'Ariel',

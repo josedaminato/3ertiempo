@@ -1,0 +1,14 @@
+RewriteEngine On
+
+# API → proxy PHP
+RewriteCond %{REQUEST_URI} ^/api [NC]
+RewriteRule ^api/?(.*)$ api/index.php [L,QSA]
+
+# Archivos estáticos; fallback a index.html
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule ^ index.html [L]
+
+<FilesMatch "\.(env|db|log|sh)$">
+  Require all denied
+</FilesMatch>

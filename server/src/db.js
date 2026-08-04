@@ -1,4 +1,4 @@
-import Database from 'better-sqlite3';
+import initSqlJs from 'sql.js';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -6,17 +6,95 @@ import { fileURLToPath } from 'url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const dataDir = path.join(__dirname, '..', 'data');
 const dbPath = path.join(dataDir, '3ertiempo.db');
+const wasmPath = path.join(__dirname, '..', 'node_modules', 'sql.js', 'dist', 'sql-wasm.wasm');
 
 if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
 
-const db = new Database(dbPath);
-db.pragma('journal_mode = WAL');
-db.pragma('foreign_keys = ON');
+const SQL = await initSqlJs({
+  locateFile: () => wasmPath
+});
+
+let rawDb;
+if (fs.existsSync(dbPath)) {
+  rawDb = new SQL.Database(fs.readFileSync(dbPath));
+} else {
+  rawDb = new SQL.Database();
+}
+
+let inTransaction = false;
+
+function persist() {
+  if (inTransaction) return;
+  const data = rawDb.export();
+  fs.writeFileSync(dbPath, Buffer.from(data));
+}
+
+class CompatStatement {
+  constructor(sql) {
+    this.sql = sql;
+  }
+
+  run(...params) {
+    rawDb.run(this.sql, params);
+    if (!inTransaction) persist();
+    const row = rawDb.exec('SELECT last_insert_rowid() AS id')[0]?.values?.[0]?.[0];
+    return { lastInsertRowid: row ?? 0, changes: rawDb.getRowsModified() };
+  }
+
+  get(...params) {
+    const stmt = rawDb.prepare(this.sql);
+    try {
+      if (params.length) stmt.bind(params);
+      if (stmt.step()) return stmt.getAsObject();
+      return undefined;
+    } finally {
+      stmt.free();
+    }
+  }
+
+  all(...params) {
+    const stmt = rawDb.prepare(this.sql);
+    const rows = [];
+    try {
+      if (params.length) stmt.bind(params);
+      while (stmt.step()) rows.push(stmt.getAsObject());
+      return rows;
+    } finally {
+      stmt.free();
+    }
+  }
+}
+
+const db = {
+  exec(sql) {
+    rawDb.exec(sql);
+    persist();
+  },
+  prepare(sql) {
+    return new CompatStatement(sql);
+  },
+  transaction(fn) {
+    return () => {
+      inTransaction = true;
+      rawDb.run('BEGIN');
+      try {
+        fn();
+        rawDb.run('COMMIT');
+        persist();
+      } catch (err) {
+        try { rawDb.run('ROLLBACK'); } catch { /* sin transacción activa */ }
+        throw err;
+      } finally {
+        inTransaction = false;
+      }
+    };
+  }
+};
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS players (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL UNIQUE COLLATE NOCASE,
+    name TEXT NOT NULL UNIQUE,
     position_1 TEXT NOT NULL DEFAULT 'MED',
     position_2 TEXT NOT NULL DEFAULT 'DEL',
     plays_goalkeeper INTEGER NOT NULL DEFAULT 0,
@@ -31,16 +109,16 @@ db.exec(`
 
   CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    player_id INTEGER NOT NULL UNIQUE REFERENCES players(id) ON DELETE CASCADE,
-    username TEXT NOT NULL UNIQUE COLLATE NOCASE,
+    player_id INTEGER NOT NULL UNIQUE,
+    username TEXT NOT NULL UNIQUE,
     password_hash TEXT NOT NULL,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
 
   CREATE TABLE IF NOT EXISTS peer_ratings (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    rater_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    rated_player_id INTEGER NOT NULL REFERENCES players(id) ON DELETE CASCADE,
+    rater_user_id INTEGER NOT NULL,
+    rated_player_id INTEGER NOT NULL,
     stats_json TEXT NOT NULL,
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE(rater_user_id, rated_player_id)
@@ -52,7 +130,7 @@ db.exec(`
     scheduled_for TEXT,
     played_at TEXT,
     status TEXT NOT NULL DEFAULT 'voting',
-    created_by INTEGER REFERENCES users(id),
+    created_by INTEGER,
     team_claro_json TEXT NOT NULL DEFAULT '[]',
     team_oscuro_json TEXT NOT NULL DEFAULT '[]',
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -60,17 +138,17 @@ db.exec(`
 
   CREATE TABLE IF NOT EXISTS match_votes (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    match_id TEXT NOT NULL REFERENCES matches(id) ON DELETE CASCADE,
-    rater_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    rated_player_id INTEGER NOT NULL REFERENCES players(id) ON DELETE CASCADE,
+    match_id TEXT NOT NULL,
+    rater_user_id INTEGER NOT NULL,
+    rated_player_id INTEGER NOT NULL,
     score INTEGER NOT NULL CHECK(score BETWEEN 1 AND 5),
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE(match_id, rater_user_id, rated_player_id)
   );
 
   CREATE TABLE IF NOT EXISTS convocation (
-    player_id INTEGER PRIMARY KEY REFERENCES players(id) ON DELETE CASCADE,
-    selected_by INTEGER REFERENCES users(id),
+    player_id INTEGER PRIMARY KEY,
+    selected_by INTEGER,
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
 `);
@@ -126,7 +204,7 @@ function playerPayloadToBaseStats(body) {
 }
 
 function getPlayerByName(name) {
-  return db.prepare('SELECT * FROM players WHERE name = ? COLLATE NOCASE').get(String(name || '').trim());
+  return db.prepare('SELECT * FROM players WHERE lower(name) = lower(?)').get(String(name || '').trim());
 }
 
 function getPlayerById(id) {
@@ -138,7 +216,7 @@ function getUserByUsername(username) {
     SELECT u.*, p.name AS player_name
     FROM users u
     JOIN players p ON p.id = u.player_id
-    WHERE u.username = ? COLLATE NOCASE
+    WHERE lower(u.username) = lower(?)
   `).get(String(username || '').trim());
 }
 
